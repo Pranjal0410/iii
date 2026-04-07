@@ -8,6 +8,7 @@ import {
   Layers,
   ListOrdered,
   Menu,
+  MessageSquare,
   Moon,
   Server,
   Settings,
@@ -23,6 +24,7 @@ import { healthQuery, useConfig } from '@/api'
 import { useTheme } from '@/hooks/useTheme'
 
 const BASE_NAV_ITEMS = [
+  { name: 'Chat', href: '/chat', icon: MessageSquare },
   { name: 'Functions', href: '/functions', icon: Server },
   { name: 'Triggers', href: '/triggers', icon: Zap },
   { name: 'States', href: '/states', icon: Database },

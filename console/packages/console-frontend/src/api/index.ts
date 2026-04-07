@@ -1,4 +1,5 @@
-// Configuration
+// Chat
+export { createChatStreamSubscription, sendChatMessage } from './chat'
 
 // Alerts
 export type { AlertState, AlertsResponse } from './alerts/alerts'
