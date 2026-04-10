@@ -95,16 +95,20 @@ async fn fetch_latest_release_by_prefix(
     spec: &BinarySpec,
     prefix: &str,
 ) -> Result<Release, IiiGithubError> {
-    // Try /releases/latest first — single API call, GitHub guarantees non-prerelease
-    let latest_url = format!("https://api.github.com/repos/{}/releases/latest", spec.repo);
+    let include_prereleases = current_version_allows_prereleases();
 
-    if let Ok(response) = client.get(&latest_url).send().await
-        && response.status().is_success()
-        && let Ok(release) = response.json::<Release>().await
-        && tag_matches_prefix(&release.tag_name, prefix)
-        && !release.prerelease
-    {
-        return Ok(release);
+    if !include_prereleases {
+        // Try /releases/latest first — single API call, GitHub guarantees non-prerelease
+        let latest_url = format!("https://api.github.com/repos/{}/releases/latest", spec.repo);
+
+        if let Ok(response) = client.get(&latest_url).send().await
+            && response.status().is_success()
+            && let Ok(release) = response.json::<Release>().await
+            && tag_matches_prefix(&release.tag_name, prefix)
+            && !release.prerelease
+        {
+            return Ok(release);
+        }
     }
 
     // Fallback: list releases and filter by prefix (monorepo edge case)
@@ -118,16 +122,11 @@ async fn fetch_latest_release_by_prefix(
     match response.status() {
         status if status.is_success() => {
             let releases: Vec<Release> = response.json().await?;
-            let tag_prefix = format!("{}/v", prefix);
-
-            releases
-                .into_iter()
-                .find(|r| r.tag_name.starts_with(&tag_prefix) && !r.prerelease)
-                .ok_or_else(|| {
-                    IiiGithubError::Registry(RegistryError::NoReleasesAvailable {
-                        binary: spec.name.to_string(),
-                    })
+            select_release_by_prefix(releases, prefix, include_prereleases).ok_or_else(|| {
+                IiiGithubError::Registry(RegistryError::NoReleasesAvailable {
+                    binary: spec.name.to_string(),
                 })
+            })
         }
         status if status == reqwest::StatusCode::FORBIDDEN => {
             Err(IiiGithubError::Network(NetworkError::RateLimited))
@@ -136,6 +135,38 @@ async fn fetch_latest_release_by_prefix(
             response.error_for_status().unwrap_err(),
         ))),
     }
+}
+
+fn current_version_allows_prereleases() -> bool {
+    version_allows_prereleases(env!("CARGO_PKG_VERSION"))
+}
+
+fn version_allows_prereleases(version: &str) -> bool {
+    Version::parse(version)
+        .map(|version| !version.pre.is_empty())
+        .unwrap_or(false)
+}
+
+fn select_release_by_prefix(
+    releases: Vec<Release>,
+    prefix: &str,
+    include_prereleases: bool,
+) -> Option<Release> {
+    let tag_prefix = format!("{}/v", prefix);
+
+    releases
+        .into_iter()
+        .filter(|release| {
+            release.tag_name.starts_with(&tag_prefix)
+                && (include_prereleases || !release.prerelease)
+        })
+        .filter_map(|release| {
+            parse_release_version(&release.tag_name)
+                .ok()
+                .map(|v| (v, release))
+        })
+        .max_by(|(left, _), (right, _)| left.cmp(right))
+        .map(|(_, release)| release)
 }
 
 /// Helper error that can be either Network or Registry.
@@ -191,6 +222,10 @@ mod tests {
         assert_eq!(
             parse_release_version("motia/v0.5.0").unwrap(),
             Version::new(0, 5, 0)
+        );
+        assert_eq!(
+            parse_release_version("iii/v0.11.0-next.7").unwrap(),
+            Version::parse("0.11.0-next.7").unwrap()
         );
     }
 
@@ -256,5 +291,69 @@ mod tests {
             assets: vec![],
         };
         assert!(!tag_matches_prefix(&release.tag_name, "iii"));
+    }
+
+    #[test]
+    fn test_stable_version_does_not_allow_prereleases() {
+        assert!(!version_allows_prereleases("0.10.0"));
+    }
+
+    #[test]
+    fn test_prerelease_version_allows_prereleases() {
+        assert!(version_allows_prereleases("0.11.0-next.6"));
+        assert!(version_allows_prereleases("0.11.0-next.7"));
+    }
+
+    #[test]
+    fn test_select_release_by_prefix_skips_prereleases_for_stable_builds() {
+        let selected = select_release_by_prefix(
+            vec![
+                release("iii/v0.11.0-next.7", true),
+                release("iii/v0.10.0", false),
+            ],
+            "iii",
+            false,
+        )
+        .expect("should select latest stable release");
+
+        assert_eq!(selected.tag_name, "iii/v0.10.0");
+    }
+
+    #[test]
+    fn test_select_release_by_prefix_allows_prereleases_for_prerelease_builds() {
+        let selected = select_release_by_prefix(
+            vec![
+                release("iii/v0.11.0-next.6", true),
+                release("iii/v0.10.0", false),
+                release("iii/v0.11.0-next.7", true),
+            ],
+            "iii",
+            true,
+        )
+        .expect("should select latest matching release");
+
+        assert_eq!(selected.tag_name, "iii/v0.11.0-next.7");
+    }
+
+    #[test]
+    fn test_select_release_by_prefix_rejects_wrong_prefix() {
+        let selected = select_release_by_prefix(
+            vec![
+                release("sdk/v0.12.0", false),
+                release("iii/v0.11.0-next.7", true),
+            ],
+            "iii",
+            false,
+        );
+
+        assert!(selected.is_none());
+    }
+
+    fn release(tag_name: &str, prerelease: bool) -> Release {
+        Release {
+            tag_name: tag_name.to_string(),
+            prerelease,
+            assets: vec![],
+        }
     }
 }
