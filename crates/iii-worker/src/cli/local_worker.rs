@@ -168,11 +168,6 @@ pub fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), String> {
 /// `start_local_worker`.
 pub const GUEST_SUPERVISOR_PATH: &str = "/opt/iii/supervisor";
 
-/// Guest-side virtio-console control port exposed by libkrun when the
-/// VM is booted with `--control-sock`. Must match the device index
-/// libkrun assigns to the single explicit port we add.
-pub const GUEST_CONTROL_PORT: &str = "/dev/vport0p1";
-
 pub fn build_libkrun_local_script(project: &ProjectInfo, prepared: bool) -> String {
     build_libkrun_local_script_ex(project, prepared, true)
 }
@@ -268,12 +263,15 @@ echo "iii: workspace ready; deps mounted VM-local from $DEPS_ROOT" >&2"#
     // we fall back to exec'ing run_cmd directly — the VM still boots,
     // file edits just trigger a full restart via `iii-worker start`.
     if wrap_with_supervisor {
+        // --control-port is omitted so the supervisor resolves it
+        // via sysfs (/sys/class/virtio-ports/*/name = "iii.control").
+        // Hardcoding /dev/vport0p1 breaks when libkrun enumerates an
+        // implicit console ahead of our named port.
         parts.push(format!(
-            "{} && exec {} --run-cmd {} --control-port {} --workdir /workspace",
+            "{} && exec {} --run-cmd {} --workdir /workspace",
             env_exports,
             GUEST_SUPERVISOR_PATH,
             shell_escape_arg(&project.run_cmd),
-            GUEST_CONTROL_PORT,
         ));
     } else {
         parts.push(format!("{} && exec {}", env_exports, project.run_cmd));

@@ -23,6 +23,13 @@ use clap::Parser;
 use iii_supervisor::child::{Config, State};
 use iii_supervisor::{control, signals};
 
+/// Virtio-console port name configured on the host side via
+/// `ConsoleBuilder::port("iii.control", ...)`. The guest kernel
+/// exposes this at `/sys/class/virtio-ports/<dev>/name`; we find the
+/// matching device node at runtime rather than hardcoding a path that
+/// depends on port-enumeration order.
+pub const CONTROL_PORT_NAME: &str = "iii.control";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "iii-supervisor",
@@ -34,15 +41,41 @@ struct Args {
     #[arg(long, value_name = "CMD")]
     run_cmd: String,
 
-    /// Path to the virtio-console control port exposed by libkrun. The
-    /// host writes newline-delimited JSON requests here; the supervisor
-    /// replies on the same fd.
-    #[arg(long, default_value = "/dev/vport0p1", value_name = "PATH")]
-    control_port: PathBuf,
+    /// Optional override for the control-port device path. When set,
+    /// skips the sysfs name lookup and opens this path directly. Used
+    /// by tests and as an escape hatch; normal boots resolve the port
+    /// by name (`iii.control`).
+    #[arg(long, value_name = "PATH")]
+    control_port: Option<PathBuf>,
 
     /// Working directory for the child process.
     #[arg(long, default_value = "/workspace", value_name = "DIR")]
     workdir: PathBuf,
+}
+
+/// Walk `/sys/class/virtio-ports/*/name` and return the `/dev/<dev>`
+/// path for the entry whose name matches `target`. Returns `None`
+/// when sysfs isn't mounted, no entries exist, or no name matches.
+///
+/// Virtio-console port numbering depends on controller count and
+/// whether the implicit console is enabled — hardcoding
+/// `/dev/vport0p1` breaks when libkrun wires the implicit console
+/// first. The sysfs name is stable by construction (we pick it on
+/// the host), so lookup by name is the right primitive.
+fn find_virtio_port_by_name(target: &str) -> Option<PathBuf> {
+    let sysfs = std::path::Path::new("/sys/class/virtio-ports");
+    let entries = std::fs::read_dir(sysfs).ok()?;
+    for entry in entries.flatten() {
+        let dev_name = entry.file_name();
+        let dev_name_str = dev_name.to_string_lossy();
+        let name_file = entry.path().join("name");
+        if let Ok(contents) = std::fs::read_to_string(&name_file)
+            && contents.trim() == target
+        {
+            return Some(PathBuf::from("/dev").join(dev_name_str.as_ref()));
+        }
+    }
+    None
 }
 
 fn main() -> anyhow::Result<()> {
@@ -55,9 +88,30 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+
+    // Resolve the control port: explicit override wins, otherwise
+    // look up by name via /sys/class/virtio-ports. The sysfs lookup
+    // is the correct primitive because device index (e.g. vport0p1
+    // vs vport0p2) depends on whether libkrun wired an implicit
+    // console ahead of our named port — something we can't predict
+    // from the host side.
+    let control_port = match &args.control_port {
+        Some(p) => p.clone(),
+        None => match find_virtio_port_by_name(CONTROL_PORT_NAME) {
+            Some(p) => p,
+            None => {
+                anyhow::bail!(
+                    "could not locate virtio-console port '{CONTROL_PORT_NAME}' in \
+                     /sys/class/virtio-ports. The VM may have been booted without \
+                     --control-sock, or sysfs isn't mounted yet."
+                );
+            }
+        },
+    };
+
     tracing::info!(
         run_cmd = %args.run_cmd,
-        control_port = %args.control_port.display(),
+        control_port = %control_port.display(),
         workdir = %args.workdir.display(),
         "iii-supervisor starting"
     );
@@ -81,7 +135,7 @@ fn main() -> anyhow::Result<()> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
-        .open(&args.control_port)?;
+        .open(&control_port)?;
     let writer = file.try_clone()?;
     let reader = BufReader::new(file);
 
