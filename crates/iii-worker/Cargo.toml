@@ -24,6 +24,7 @@ integration-oci = []
 [dependencies]
 iii-filesystem = { path = "../iii-filesystem" }
 iii-network = { path = "../iii-network" }
+iii-supervisor = { path = "../iii-supervisor" }
 msb_krun = { version = "0.1.9", features = ["net"] }
 oci-client = "0.16"
 oci-spec = "0.9"

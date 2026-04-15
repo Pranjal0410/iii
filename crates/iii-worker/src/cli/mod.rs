@@ -16,5 +16,7 @@ pub mod project;
 pub mod registry;
 pub mod rootfs;
 pub mod source_watcher;
+pub mod supervisor_ctl;
+pub mod supervisor_provision;
 pub mod vm_boot;
 pub mod worker_manager;

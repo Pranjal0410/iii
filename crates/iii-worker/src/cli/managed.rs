@@ -1129,6 +1129,22 @@ pub async fn handle_managed_stop(worker_name: &str, _address: &str, _port: u16) 
             // observe the VM shutdown as a file event and try to restart.
             reap_source_watcher(worker_name).await;
 
+            // Ask the in-VM supervisor to shut its child down cleanly.
+            // The supervisor exits on success, which triggers libkrun's
+            // poweroff path, which is faster and cleaner than a bare
+            // SIGTERM to the __vm-boot process. We still fall through
+            // to adapter.stop below — if the supervisor wasn't reachable
+            // (binary missing, channel dead), that's the authoritative
+            // teardown; if the shutdown succeeded, adapter.stop's
+            // SIGTERM becomes a no-op against an already-exiting VM.
+            if let Err(e) = super::supervisor_ctl::request_shutdown(worker_name).await {
+                tracing::debug!(
+                    worker = %worker_name,
+                    error = %e,
+                    "supervisor shutdown unavailable, falling through to SIGTERM"
+                );
+            }
+
             let adapter = super::worker_manager::create_adapter("libkrun");
             let _ = adapter.stop(&pid.to_string(), 10).await;
             if let Some(f) = pidfile {

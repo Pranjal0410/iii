@@ -69,6 +69,10 @@ pub async fn run_dev(
     cmd.arg("--workdir").arg("/workspace");
     cmd.arg("--vcpus").arg(vcpus.to_string());
     cmd.arg("--ram").arg(ram_mib.to_string());
+    // Control channel for host-driven fast restarts. __vm-boot owns the
+    // proxy thread + socketpair; we just tell it where to put the unix
+    // socket so the watcher (and stop handler) knows where to connect.
+    cmd.arg("--control-sock").arg(rootfs.join("control.sock"));
 
     for (key, value) in &env {
         cmd.arg("--env").arg(format!("{}={}", key, value));

@@ -84,6 +84,65 @@ pub const IGNORED_DIR_NAMES: &[&str] = &[
     ".DS_Store",
 ];
 
+/// Dependency manifest filenames. A change to any of these forces a
+/// full VM restart (rerun install + reboot) instead of the fast
+/// supervisor-level restart — the VM-local dep caches need to see new
+/// packages, which only happens at boot.
+pub const DEP_MANIFEST_NAMES: &[&str] = &[
+    // Node / TypeScript
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    // Python
+    "requirements.txt",
+    "pyproject.toml",
+    "poetry.lock",
+    "Pipfile",
+    "Pipfile.lock",
+    "uv.lock",
+    // Rust
+    "Cargo.toml",
+    "Cargo.lock",
+    // Go
+    "go.mod",
+    "go.sum",
+    // Ruby
+    "Gemfile",
+    "Gemfile.lock",
+    // Elixir
+    "mix.exs",
+    "mix.lock",
+    // JVM
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    // .NET
+    "packages.config",
+];
+
+/// Categorizes a changed path so the watcher can pick fast path vs.
+/// full restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    /// Regular source file. Try supervisor fast restart first; fall
+    /// back to a full VM restart on any error.
+    Source,
+    /// A dep-manifest change. Go straight to a full VM restart so the
+    /// install step reruns inside the guest.
+    DepManifest,
+}
+
+/// Returns `true` if `path` is a dep manifest that should force a full
+/// VM restart (and not a fast supervisor cycle).
+pub fn is_dep_manifest(path: &Path) -> bool {
+    let name = match path.file_name().and_then(|n| n.to_str()) {
+        Some(n) => n,
+        None => return false,
+    };
+    DEP_MANIFEST_NAMES.iter().any(|d| *d == name)
+}
+
 /// Returns true if a notify event on this path should be ignored.
 ///
 /// A path is ignored when any of its components (after stripping the
@@ -124,7 +183,7 @@ pub async fn watch_and_restart<F>(
     mut on_change: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(&str) + Send + 'static,
+    F: FnMut(&str, ChangeKind) + Send + 'static,
 {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Event>();
 
@@ -163,7 +222,7 @@ where
     );
 
     loop {
-        let event = match rx.recv().await {
+        let first = match rx.recv().await {
             Some(e) => e,
             None => {
                 tracing::warn!(worker = %worker_name, "source watcher: channel closed");
@@ -171,27 +230,89 @@ where
             }
         };
 
-        // Debounce: swallow the initial event, then drain everything
-        // that arrives during the quiet window.
-        drop(event);
+        // Debounce window. Collect all paths that fired during this
+        // quiet period so we can decide whether the change is a dep
+        // manifest (force full VM restart) or a regular source edit
+        // (try supervisor fast path).
+        let mut burst_paths: Vec<PathBuf> = first.paths.clone();
         tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)).await;
-        while rx.try_recv().is_ok() {}
+        while let Ok(ev) = rx.try_recv() {
+            burst_paths.extend(ev.paths);
+        }
+
+        let kind = if burst_paths.iter().any(|p| is_dep_manifest(p)) {
+            ChangeKind::DepManifest
+        } else {
+            ChangeKind::Source
+        };
 
         tracing::info!(
             worker = %worker_name,
-            "source watcher: change detected, restarting VM"
+            kind = ?kind,
+            paths = burst_paths.len(),
+            "source watcher: change detected"
         );
-        on_change(&worker_name);
+        on_change(&worker_name, kind);
     }
 
     Ok(())
 }
 
-/// Production restart callback: spawn `iii-worker start <name>` and
-/// wait for it. `start` itself calls `kill_stale_worker` before booting,
-/// so a single invocation both tears down the old VM and brings up a
-/// fresh one.
-pub fn restart_via_cli(worker_name: &str) {
+/// Production restart dispatcher.
+///
+/// For `ChangeKind::Source`, tries the supervisor fast path first. If
+/// the supervisor is unreachable (not installed, crashed, timeout), or
+/// if the change is a `DepManifest`, falls back to a full VM restart
+/// via `iii-worker start <name>`.
+///
+/// Invoked by `watch_and_restart` on every debounced file-change
+/// burst.
+pub fn restart_via_cli(worker_name: &str, kind: ChangeKind) {
+    if matches!(kind, ChangeKind::Source) {
+        match try_fast_restart(worker_name) {
+            Ok(()) => {
+                tracing::info!(
+                    worker = %worker_name,
+                    path = "fast",
+                    "source watcher: restart ok"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::info!(
+                    worker = %worker_name,
+                    error = %e,
+                    "source watcher: fast path unavailable, falling back to full VM restart"
+                );
+            }
+        }
+    } else {
+        tracing::info!(
+            worker = %worker_name,
+            "source watcher: dep manifest changed, forcing full VM restart"
+        );
+    }
+
+    restart_via_full_vm(worker_name);
+}
+
+/// Fast path — talk to the in-VM supervisor over the unix socket that
+/// `__vm-boot`'s proxy publishes. Blocks until the supervisor answers
+/// or the 500ms timeout fires. A plain single-thread tokio runtime is
+/// spun up inline; this function is called from the watcher's sync
+/// callback boundary and returns quickly either way.
+fn try_fast_restart(worker_name: &str) -> anyhow::Result<()> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(super::supervisor_ctl::request_restart(worker_name))
+}
+
+/// Slow path — spawn `iii-worker start <name>` which internally calls
+/// `kill_stale_worker` (killing the old VM + watcher sidecar) and
+/// boots a fresh VM. Taken when the supervisor is unreachable or when
+/// the changed file is a dep manifest.
+fn restart_via_full_vm(worker_name: &str) {
     let self_exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -210,7 +331,11 @@ pub fn restart_via_cli(worker_name: &str) {
 
     match output {
         Ok(o) if o.status.success() => {
-            tracing::info!(worker = %worker_name, "source watcher: restart ok");
+            tracing::info!(
+                worker = %worker_name,
+                path = "full",
+                "source watcher: restart ok"
+            );
         }
         Ok(o) => {
             tracing::warn!(
@@ -446,7 +571,7 @@ mod tests {
         let worker_name = "test-worker".to_string();
         let root_clone = root.clone();
         let handle = tokio::spawn(async move {
-            let _ = watch_and_restart(worker_name, root_clone, move |_| {
+            let _ = watch_and_restart(worker_name, root_clone, move |_, _| {
                 counter_cb.fetch_add(1, Ordering::SeqCst);
             })
             .await;
@@ -484,7 +609,7 @@ mod tests {
         let worker_name = "debounce-worker".to_string();
         let root_clone = root.clone();
         let handle = tokio::spawn(async move {
-            let _ = watch_and_restart(worker_name, root_clone, move |_| {
+            let _ = watch_and_restart(worker_name, root_clone, move |_, _| {
                 counter_cb.fetch_add(1, Ordering::SeqCst);
             })
             .await;
@@ -513,6 +638,156 @@ mod tests {
         handle.abort();
     }
 
+    #[test]
+    fn is_dep_manifest_detects_node() {
+        assert!(is_dep_manifest(&PathBuf::from("/proj/package.json")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/package-lock.json")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/pnpm-lock.yaml")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/yarn.lock")));
+    }
+
+    #[test]
+    fn is_dep_manifest_detects_python() {
+        assert!(is_dep_manifest(&PathBuf::from("/proj/requirements.txt")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/pyproject.toml")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/poetry.lock")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/Pipfile")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/uv.lock")));
+    }
+
+    #[test]
+    fn is_dep_manifest_detects_rust_go_ruby_elixir() {
+        assert!(is_dep_manifest(&PathBuf::from("/proj/Cargo.toml")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/Cargo.lock")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/go.mod")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/go.sum")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/Gemfile")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/mix.exs")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/mix.lock")));
+    }
+
+    #[test]
+    fn is_dep_manifest_detects_jvm_and_dotnet() {
+        assert!(is_dep_manifest(&PathBuf::from("/proj/pom.xml")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/build.gradle")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/build.gradle.kts")));
+        assert!(is_dep_manifest(&PathBuf::from("/proj/packages.config")));
+    }
+
+    #[test]
+    fn is_dep_manifest_rejects_regular_source_files() {
+        assert!(!is_dep_manifest(&PathBuf::from("/proj/src/index.ts")));
+        assert!(!is_dep_manifest(&PathBuf::from("/proj/main.py")));
+        assert!(!is_dep_manifest(&PathBuf::from("/proj/README.md")));
+        // Not the same thing as package.json — some tools write these.
+        assert!(!is_dep_manifest(&PathBuf::from("/proj/manifest.json")));
+    }
+
+    #[test]
+    fn is_dep_manifest_rejects_empty_path() {
+        assert!(!is_dep_manifest(&PathBuf::from("")));
+    }
+
+    #[tokio::test]
+    async fn watch_and_restart_classifies_dep_manifest_change() {
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+
+        let observed: Arc<Mutex<Vec<ChangeKind>>> = Arc::new(Mutex::new(Vec::new()));
+        let observed_cb = observed.clone();
+        let root_clone = root.clone();
+        let handle = tokio::spawn(async move {
+            let _ = watch_and_restart("depworker".to_string(), root_clone, move |_, kind| {
+                observed_cb.lock().unwrap().push(kind);
+            })
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        std::fs::write(root.join("package.json"), "{\"version\":\"1\"}").unwrap();
+        tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS + 400)).await;
+
+        let kinds = observed.lock().unwrap().clone();
+        assert!(
+            kinds.iter().any(|k| matches!(k, ChangeKind::DepManifest)),
+            "expected at least one DepManifest classification, got {kinds:?}"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn watch_and_restart_classifies_source_change() {
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        let observed: Arc<Mutex<Vec<ChangeKind>>> = Arc::new(Mutex::new(Vec::new()));
+        let observed_cb = observed.clone();
+        let root_clone = root.clone();
+        let handle = tokio::spawn(async move {
+            let _ = watch_and_restart("srcworker".to_string(), root_clone, move |_, kind| {
+                observed_cb.lock().unwrap().push(kind);
+            })
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        std::fs::write(root.join("index.ts"), "console.log(1)").unwrap();
+        tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS + 400)).await;
+
+        let kinds = observed.lock().unwrap().clone();
+        assert!(
+            kinds.iter().all(|k| matches!(k, ChangeKind::Source)),
+            "expected only Source classifications, got {kinds:?}"
+        );
+        assert!(!kinds.is_empty(), "expected at least one classification");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn watch_and_restart_coalesces_mixed_burst_as_dep_manifest() {
+        // Any single dep-manifest path in the debounced burst must
+        // escalate the classification — otherwise we'd fast-restart
+        // a worker whose dependencies just changed and be stuck with
+        // stale node_modules until the next real restart.
+        use std::sync::{Arc, Mutex};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        let observed: Arc<Mutex<Vec<ChangeKind>>> = Arc::new(Mutex::new(Vec::new()));
+        let observed_cb = observed.clone();
+        let root_clone = root.clone();
+        let handle = tokio::spawn(async move {
+            let _ = watch_and_restart("mixworker".to_string(), root_clone, move |_, kind| {
+                observed_cb.lock().unwrap().push(kind);
+            })
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Mixed burst: three source files and one dep manifest.
+        std::fs::write(root.join("a.ts"), "1").unwrap();
+        std::fs::write(root.join("b.ts"), "1").unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        std::fs::write(root.join("c.ts"), "1").unwrap();
+        tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS + 400)).await;
+
+        let kinds = observed.lock().unwrap().clone();
+        assert!(
+            kinds.iter().any(|k| matches!(k, ChangeKind::DepManifest)),
+            "mixed burst with package.json must escalate to DepManifest, got {kinds:?}"
+        );
+
+        handle.abort();
+    }
+
     #[tokio::test]
     async fn watch_and_restart_ignores_node_modules_writes() {
         use std::sync::Arc;
@@ -529,7 +804,7 @@ mod tests {
         let worker_name = "ignore-worker".to_string();
         let root_clone = root.clone();
         let handle = tokio::spawn(async move {
-            let _ = watch_and_restart(worker_name, root_clone, move |_| {
+            let _ = watch_and_restart(worker_name, root_clone, move |_, _| {
                 counter_cb.fetch_add(1, Ordering::SeqCst);
             })
             .await;
