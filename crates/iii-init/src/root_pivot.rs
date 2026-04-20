@@ -177,10 +177,7 @@ pub fn pivot_to_tmpfs_root() -> Result<(), InitError> {
             MsFlags::MS_BIND,
             None::<&str>,
         )
-        .map_err(|e| InitError::Mount {
-            target,
-            source: e,
-        })?;
+        .map_err(|e| InitError::Mount { target, source: e })?;
     }
 
     // Phase 3 — relocate the /workspace virtiofs mount so it
@@ -205,10 +202,7 @@ pub fn pivot_to_tmpfs_root() -> Result<(), InitError> {
             MsFlags::MS_MOVE,
             None::<&str>,
         )
-        .map_err(|e| InitError::Mount {
-            target,
-            source: e,
-        })?;
+        .map_err(|e| InitError::Mount { target, source: e })?;
     }
 
     // Phase 4 — pre-create kernel-filesystem mount points on the
@@ -358,7 +352,10 @@ mod tests {
         }
         let entries = enumerate_rootfs_entries(root).unwrap();
         let names = names_of(&entries);
-        assert!(names.contains(&"app"), "`/app` must be enumerated for OCI images");
+        assert!(
+            names.contains(&"app"),
+            "`/app` must be enumerated for OCI images"
+        );
         assert!(names.contains(&"bin"));
         assert!(names.contains(&"usr"));
     }
@@ -368,7 +365,15 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path();
         for name in [
-            "proc", "sys", "dev", "tmp", "run", "new-root", "old-root", "workspace", "etc",
+            "proc",
+            "sys",
+            "dev",
+            "tmp",
+            "run",
+            "new-root",
+            "old-root",
+            "workspace",
+            "etc",
         ] {
             fs::create_dir(root.join(name)).unwrap();
         }

@@ -167,9 +167,7 @@ async fn run_with_socket(mut args: ExecArgs, sock: PathBuf) -> anyhow::Result<i3
         std::io::stdout().is_terminal(),
     ) {
         args.tty = true;
-        tracing::debug!(
-            "shell_client: auto-enabled --tty (stdin+stdout both terminals)"
-        );
+        tracing::debug!("shell_client: auto-enabled --tty (stdin+stdout both terminals)");
     }
 
     if args.tty && !std::io::stdin().is_terminal() {
@@ -529,11 +527,7 @@ async fn pump_sigint_pipe(writer: SharedWriter, corr_id: u32) -> anyhow::Result<
         }
         count += 1;
         let (signal_num, should_exit) = next_signal_on_sigint(count);
-        let frame = match encode_frame(
-            corr_id,
-            0,
-            &ShellMessage::Signal { signal: signal_num },
-        ) {
+        let frame = match encode_frame(corr_id, 0, &ShellMessage::Signal { signal: signal_num }) {
             Ok(f) => f,
             Err(e) => {
                 tracing::warn!("shell_client: failed to encode signal frame: {e}");
@@ -616,8 +610,8 @@ impl RawModeGuard {
         let stdin = std::io::stdin();
         let fd = stdin.as_raw_fd();
         // tcgetattr/tcsetattr take AsFd in nix 0.30; stdin has AsFd.
-        let original = tcgetattr(&stdin)
-            .context("tcgetattr on host stdin (is it actually a terminal?)")?;
+        let original =
+            tcgetattr(&stdin).context("tcgetattr on host stdin (is it actually a terminal?)")?;
         let mut raw = original.clone();
         cfmakeraw(&mut raw);
         tcsetattr(&stdin, SetArg::TCSANOW, &raw).context("tcsetattr raw mode")?;
@@ -680,8 +674,7 @@ async fn pump_host_stdin_tty(writer: SharedWriter, corr_id: u32) -> anyhow::Resu
 async fn pump_sigwinch(writer: SharedWriter, corr_id: u32) -> anyhow::Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
 
-    let mut winch = signal(SignalKind::window_change())
-        .context("installing SIGWINCH handler")?;
+    let mut winch = signal(SignalKind::window_change()).context("installing SIGWINCH handler")?;
     loop {
         if winch.recv().await.is_none() {
             break;
@@ -739,9 +732,7 @@ mod tests {
     #[test]
     fn auto_tty_on_when_both_streams_are_terminals() {
         assert!(should_auto_enable_tty(
-            /* tty */ false,
-            /* no_tty */ false,
-            /* stdin  */ true,
+            /* tty */ false, /* no_tty */ false, /* stdin  */ true,
             /* stdout */ true,
         ));
     }

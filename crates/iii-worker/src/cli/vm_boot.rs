@@ -708,8 +708,7 @@ fn boot_vm(args: &VmBootArgs) -> Result<std::convert::Infallible, String> {
     // its tasks alive as long as the runtime handle is reachable,
     // and the runtime is dropped only when __vm-boot exits.
     let mut guest_shell_fd: Option<i32> = None;
-    let mut shell_sock_fingerprint: Option<crate::cli::shell_relay::ShellSocketFingerprint> =
-        None;
+    let mut shell_sock_fingerprint: Option<crate::cli::shell_relay::ShellSocketFingerprint> = None;
     if let Some(sock_path) = args.shell_sock.clone() {
         let (host_end, guest_fd) = setup_control_socketpair()?;
         match crate::cli::shell_relay::spawn(

@@ -460,8 +460,7 @@ This image likely does not publish arm64. Rebuild/push a multi-arch image (linux
         // Shell-exec channel alongside the control channel. `iii worker
         // exec` connects to shell.sock; the in-VM dispatcher thread
         // handles requests. Absent => exec refuses with a clear error.
-        cmd.arg("--shell-sock")
-            .arg(worker_dir.join("shell.sock"));
+        cmd.arg("--shell-sock").arg(worker_dir.join("shell.sock"));
 
         let image_env = read_oci_env(&worker_rootfs);
         let mut caller_env: HashMap<String, String> = image_env.into_iter().collect();
