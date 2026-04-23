@@ -2498,8 +2498,7 @@ mod tests {
         // A binary worker with `binaries: None` in the resolver response means
         // the registry is inconsistent; surface the worker name so the CLI
         // error message is actionable.
-        let mut worker =
-            resolved_binary_worker("hello-worker", "1.0.0", StdHashMap::new());
+        let mut worker = resolved_binary_worker("hello-worker", "1.0.0", StdHashMap::new());
         worker.binaries = None;
 
         let err = lockfile_from_graph(&graph_with(worker), "aarch64-apple-darwin").unwrap_err();
