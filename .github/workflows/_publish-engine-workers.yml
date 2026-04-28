@@ -17,7 +17,7 @@ on:
         type: string
         default: ''
       registry_tag:
-        description: 'Registry tag(s), comma-separated (e.g. "latest" or "next,latest")'
+        description: 'Registry tag (latest, next, ...)'
         required: false
         type: string
         default: latest
@@ -55,10 +55,7 @@ jobs:
           worker_dir = pathlib.Path(os.environ["WORKER_DIR"])
           expected_version = os.environ["VERSION"]
           ref_name = os.environ.get("GITHUB_REF_NAME", "")
-          reg_tags_raw = os.environ["REGISTRY_TAG"] or "latest"
-          reg_tags = [t.strip() for t in reg_tags_raw.split(",") if t.strip()]
-          if not reg_tags:
-              reg_tags = ["latest"]
+          reg_tag = os.environ["REGISTRY_TAG"] or "latest"
           repo_url = os.environ["REPO_URL"]
 
           engine_manifest = pathlib.Path("engine/Cargo.toml")
@@ -86,9 +83,10 @@ jobs:
           readme_path = worker_dir / "README.md"
           readme = readme_path.read_text() if readme_path.exists() else ""
 
-          base_payload = {
+          payload = {
               "worker_name": worker,
               "version": version,
+              "tag": reg_tag,
               "type": "engine",
               "readme": readme,
               "repo": meta.get("repo", repo_url),
@@ -97,48 +95,34 @@ jobs:
               "dependencies": meta.get("dependencies", []) or [],
           }
 
-          for tag in reg_tags:
-              payload = {**base_payload, "tag": tag}
-              pathlib.Path(f"payload-{tag}.json").write_text(json.dumps(payload, indent=2))
-
+          out = pathlib.Path("payload.json")
+          out.write_text(json.dumps(payload, indent=2))
           if github_output := os.environ.get("GITHUB_OUTPUT"):
               with open(github_output, "a", encoding="utf-8") as handle:
                   handle.write(f"version={version}\n")
-                  handle.write(f"tags={' '.join(reg_tags)}\n")
-          summary = {k: base_payload[k] for k in base_payload if k != "readme"}
-          summary["tags"] = reg_tags
-          print(json.dumps(summary, indent=2))
+          print(json.dumps({k: payload[k] for k in payload if k != "readme"}, indent=2))
           PY
 
       - name: POST /publish
         env:
           API_URL: ${{ inputs.api_url }}
           API_KEY: ${{ secrets.WORKERS_REGISTRY_API_KEY }}
-          TAGS: ${{ steps.payload.outputs.tags }}
-          WORKER: ${{ inputs.worker }}
-          VERSION: ${{ steps.payload.outputs.version }}
         run: |
           if [[ -z "$API_KEY" ]]; then
             echo "::error::WORKERS_REGISTRY_API_KEY secret is not set"
             exit 1
           fi
-          for tag in $TAGS; do
-            echo "::group::publish ${WORKER} v${VERSION} tag=${tag}"
-            http=$(curl -sS -o response.json -w '%{http_code}' \
-              -H "X-API-Key: $API_KEY" \
-              -H "Content-Type: application/json" \
-              -X POST "$API_URL/publish" \
-              --data-binary "@payload-${tag}.json")
-            echo "HTTP $http"
-            cat response.json
-            echo
-            if [[ "$http" != "200" && "$http" != "409" ]]; then
-              echo "::error::publish failed for tag=${tag} with HTTP $http"
-              echo "::endgroup::"
-              exit 1
-            fi
-            if [[ "$http" == "409" ]]; then
-              echo "::notice::${WORKER} v${VERSION} (tag=${tag}) already published (409) — skipping"
-            fi
-            echo "::endgroup::"
-          done
+          http=$(curl -sS -o response.json -w '%{http_code}' \
+            -H "X-API-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -X POST "$API_URL/publish" \
+            --data-binary @payload.json)
+          echo "HTTP $http"
+          cat response.json
+          if [[ "$http" != "200" && "$http" != "409" ]]; then
+            echo "::error::publish failed with HTTP $http"
+            exit 1
+          fi
+          if [[ "$http" == "409" ]]; then
+            echo "::notice::${{ inputs.worker }} v${{ steps.payload.outputs.version }} already published (409) — skipping"
+          fi
