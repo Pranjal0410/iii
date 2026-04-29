@@ -1501,6 +1501,10 @@
     .xp{ padding:0 0 64px; }
     .xp-head{ padding:56px 18px 24px; }
     .xp > .seq{ margin-left:14px; margin-right:14px; }
+    /* Tighter interior padding on mobile so the reply bubble's text sits
+       closer to its border instead of looking double-indented. */
+    .xp-reply .bubble .text{ padding:2px 0px; }
+    .xp-reply .actions{ padding:2px 8px; }
   }
   @media (max-width: 720px){
     .seq{ height: 540px; }
@@ -4234,9 +4238,9 @@
 
 
   <!-- HELLO WORLD -->
-  <section class="hello" id="hello" aria-label="One protocol. Any language.">
+  <section class="hello" id="hello" aria-label="any language. one protocol.">
     <header class="hello-head">
-      <h2 class="hello-title"><span class="accent">any language.</span> <span class="mute"><b style="color:var(--ink); font-weight:500">one protocol.</b> python registers a function. rust registers a function. node consumes both.</span></h2>
+      <h2 class="hello-title"><span class="accent">any language.</span> <span class="mute"><b style="color:var(--ink); font-weight:500">one protocol.</b><br>python registers a function. rust registers a function. node consumes both.</span></h2>
     </header>
 
     <div class="hello-grid" data-mode="flow">
