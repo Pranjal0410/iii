@@ -2495,8 +2495,10 @@ dependencies = [
  "chrono",
  "clap",
  "colored",
+ "console 0.15.11",
  "criterion",
  "cron",
+ "ctrlc",
  "dashmap",
  "data-encoding",
  "dirs 6.0.0",
@@ -2530,6 +2532,7 @@ dependencies = [
  "reqwest 0.12.28",
  "ring",
  "rkyv",
+ "scaffolder-core",
  "schemars 0.8.22",
  "semver",
  "serde",
@@ -2700,18 +2703,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
-]
-
-[[package]]
-name = "iii-tools"
-version = "0.11.6"
-dependencies = [
- "anyhow",
- "clap",
- "console 0.15.11",
- "ctrlc",
- "scaffolder-core",
- "tokio",
 ]
 
 [[package]]
