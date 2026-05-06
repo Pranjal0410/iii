@@ -52,14 +52,7 @@ that is both effortlessly composable, and completely observable.
 
 ## Quick Start
 
-```bash
-iii project init myapp    # scaffold a project
-cd myapp
-iii                       # start the engine
-```
-
-Need to install `iii` first? Full walkthrough at the
-[Quickstart guide](https://iii.dev/docs/quickstart).
+Get started with iii by following the [Quickstart guide](https://iii.dev/docs/quickstart).
 
 ## SDKs
 
