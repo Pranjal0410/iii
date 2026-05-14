@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn take_virtual_worker_name_strips_internal_metadata() {
         let mut metadata = Some(serde_json::json!({
-            "artifact": { "source": "https://example.com/openapi.json" },
+            "spec": { "source": "https://example.com/openapi.json" },
             "iii": { "virtualWorker": { "name": "hackernews" } }
         }));
 
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(
             metadata,
             Some(serde_json::json!({
-                "artifact": { "source": "https://example.com/openapi.json" }
+                "spec": { "source": "https://example.com/openapi.json" }
             }))
         );
     }

@@ -2343,7 +2343,7 @@ mod tests {
             request_format: None,
             response_format: None,
             metadata: Some(json!({
-                "artifact": { "source": "https://example.com/openapi.json" },
+                "spec": { "source": "https://example.com/openapi.json" },
                 "iii": { "virtualWorker": { "name": "hackernews" } }
             })),
             invocation: Some(HttpInvocationRef {
@@ -2378,7 +2378,7 @@ mod tests {
             .expect("function should be visible as a normal function");
         assert_eq!(
             function.metadata,
-            Some(json!({ "artifact": { "source": "https://example.com/openapi.json" } }))
+            Some(json!({ "spec": { "source": "https://example.com/openapi.json" } }))
         );
 
         let http_module = engine
@@ -2391,7 +2391,7 @@ mod tests {
                 .get("hackernews::top_stories")
                 .expect("http function config should exist")
                 .metadata,
-            Some(json!({ "artifact": { "source": "https://example.com/openapi.json" } }))
+            Some(json!({ "spec": { "source": "https://example.com/openapi.json" } }))
         );
         assert!(
             http_module
@@ -2445,7 +2445,7 @@ mod tests {
             request_format: None,
             response_format: None,
             metadata: Some(json!({
-                "artifact": { "source": "https://example.com/openapi.json" },
+                "spec": { "source": "https://example.com/openapi.json" },
                 "iii": { "virtualWorker": { "name": "hackernews" } }
             })),
             invocation: Some(HttpInvocationRef {
@@ -2469,7 +2469,7 @@ mod tests {
             .expect("function should still be visible as a normal function");
         assert_eq!(
             function.metadata,
-            Some(json!({ "artifact": { "source": "https://example.com/openapi.json" } }))
+            Some(json!({ "spec": { "source": "https://example.com/openapi.json" } }))
         );
 
         let http_module = engine
