@@ -938,23 +938,23 @@ mod tests {
         let owner = uuid::Uuid::new_v4();
 
         engine.virtual_workers.claim_function(
-            "context7-stdio-worker",
+            "converted-api-worker",
             owner,
             true,
-            "context7_stdio::resolve_library_id",
+            "converted_api::get_user",
         );
         engine.virtual_workers.claim_function(
-            "context7-stdio-worker",
+            "converted-api-worker",
             owner,
             true,
-            "context7_stdio::query_docs",
+            "converted_api::list_users",
         );
 
         let workers = module.list_worker_infos(None).await;
 
         assert_eq!(workers.len(), 1);
-        assert_eq!(workers[0].id, "virtual:context7-stdio-worker");
-        assert_eq!(workers[0].name.as_deref(), Some("context7-stdio-worker"));
+        assert_eq!(workers[0].id, "virtual:converted-api-worker");
+        assert_eq!(workers[0].name.as_deref(), Some("converted-api-worker"));
         assert!(workers[0].virtual_worker);
         assert!(!workers[0].internal);
         assert_eq!(workers[0].runtime.as_deref(), Some("engine"));
@@ -963,8 +963,8 @@ mod tests {
         assert_eq!(
             workers[0].functions,
             vec![
-                "context7_stdio::query_docs".to_string(),
-                "context7_stdio::resolve_library_id".to_string()
+                "converted_api::get_user".to_string(),
+                "converted_api::list_users".to_string()
             ]
         );
     }
