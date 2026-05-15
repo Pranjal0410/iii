@@ -40,12 +40,8 @@
 
 import { ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import {
-  formatSpanLabel,
-  getSpanKindIndicator,
-  isEngineRoutingPair,
-  isEngineRoutingSpan,
-} from '@/lib/spanLabel'
+import { formatSpanLabel, getSpanKindIndicator, isEngineRoutingSpan } from '@/lib/spanLabel'
+import { buildSpanTree, flattenTree } from '@/lib/spanTree'
 import type { VisualizationSpan, WaterfallData } from '@/lib/traceTransform'
 import { formatDuration } from '@/lib/traceUtils'
 
@@ -53,124 +49,6 @@ interface WaterfallChartProps {
   data: WaterfallData
   onSpanClick: (span: VisualizationSpan) => void
   selectedSpanId?: string | null
-}
-
-interface SpanNode extends VisualizationSpan {
-  children: SpanNode[]
-  isExpanded: boolean
-  isCriticalPath: boolean
-}
-
-function buildSpanTree(spans: VisualizationSpan[]): SpanNode[] {
-  const spanMap = new Map<string, SpanNode>()
-  const roots: SpanNode[] = []
-
-  spans.forEach((span) => {
-    spanMap.set(span.span_id, {
-      ...span,
-      children: [],
-      isExpanded: true,
-      isCriticalPath: false,
-    })
-  })
-
-  spans.forEach((span) => {
-    const node = spanMap.get(span.span_id)
-    if (!node) return
-    if (span.parent_span_id && spanMap.has(span.parent_span_id)) {
-      spanMap.get(span.parent_span_id)?.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  })
-
-  function markCriticalPath(node: SpanNode): number {
-    if (node.children.length === 0) {
-      node.isCriticalPath = true
-      return node.duration_ms
-    }
-
-    let maxDuration = 0
-    let criticalChild: SpanNode | null = null
-
-    node.children.forEach((child) => {
-      const duration = markCriticalPath(child)
-      if (duration > maxDuration) {
-        maxDuration = duration
-        criticalChild = child
-      }
-    })
-
-    node.isCriticalPath = true
-    node.children.forEach((child) => {
-      if (child !== criticalChild) {
-        unmarkCriticalPath(child)
-      }
-    })
-
-    return node.duration_ms + maxDuration
-  }
-
-  function unmarkCriticalPath(node: SpanNode) {
-    node.isCriticalPath = false
-    node.children.forEach(unmarkCriticalPath)
-  }
-
-  roots.forEach(markCriticalPath)
-
-  return roots
-}
-
-interface FlatSpanRow extends SpanNode {
-  displayDepth: number
-  mergedRouting: boolean
-}
-
-interface FlattenOptions {
-  expandedIds: Set<string>
-  hideEngineRouting: boolean
-  collapseEngineRoutingPairs: boolean
-}
-
-function flattenTree(nodes: SpanNode[], opts: FlattenOptions): FlatSpanRow[] {
-  const result: FlatSpanRow[] = []
-
-  function traverse(node: SpanNode, depthOffset: number) {
-    const hidden = opts.hideEngineRouting && isEngineRoutingSpan(node)
-
-    let mergedRouting = false
-    let descendants = node.children
-    if (
-      !hidden &&
-      opts.collapseEngineRoutingPairs &&
-      node.children.length === 1 &&
-      isEngineRoutingPair(node, node.children[0])
-    ) {
-      mergedRouting = true
-      descendants = node.children[0].children
-    }
-
-    if (!hidden) {
-      result.push({
-        ...node,
-        displayDepth: Math.max(0, node.depth - depthOffset),
-        mergedRouting,
-      })
-    }
-
-    const nextOffset = hidden ? depthOffset + 1 : depthOffset
-    const childrenVisible = hidden || opts.expandedIds.has(node.span_id)
-    if (childrenVisible) {
-      for (const child of descendants) {
-        traverse(child, nextOffset)
-      }
-    }
-  }
-
-  for (const node of nodes) {
-    traverse(node, 0)
-  }
-  return result
 }
 
 interface DisplayState {
