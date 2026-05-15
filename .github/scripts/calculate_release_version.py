@@ -118,11 +118,14 @@ def calculate_version(
     Rules:
       - Promoting a prerelease to stable (prerelease == "none" and current
         has a prerelease label) keeps the base as-is.
-      - When already in the same prerelease channel, compare the requested
-        bump against the level the current base already represents
-        (relative to the latest stable release). If the request fits
-        within that level, keep the base and increment the counter; if it
-        escalates beyond it, restart from the latest stable.
+      - `patch` always increments the patch component of the current
+        base, starting a fresh prerelease counter. Patch never iterates
+        an existing train.
+      - `minor` / `major` in the same prerelease channel are
+        level-aware: if the current base already represents a bump at
+        the same or higher level (relative to the latest stable), keep
+        the base and iterate the counter; if the request escalates
+        beyond the current level, restart from the latest stable.
       - Otherwise apply the requested bump to the current base.
     """
     if bump_type not in BUMP_RANK:
@@ -140,16 +143,16 @@ def calculate_version(
         prerelease != "none"
         and cur.prerelease_label == prerelease
     )
-    if same_channel:
+    if same_channel and bump_type != "patch":
         current_level = detect_current_level(cur.base, latest_stable)
         if current_level is not None and BUMP_RANK[bump_type] <= BUMP_RANK[current_level]:
             new_base = cur.base
-        elif current_level is not None:
-            # Requested bump exceeds the current train; restart from stable.
-            new_base = bump_base(latest_stable, bump_type)  # type: ignore[arg-type]
         else:
-            # No stable to compare against — preserve the current train.
-            new_base = cur.base
+            # No stable to anchor against, or the requested bump
+            # escalates past the current train: restart from the
+            # latest stable when available, else bump the current base.
+            anchor = latest_stable if (latest_stable and current_level is not None) else cur.base
+            new_base = bump_base(anchor, bump_type)
     else:
         new_base = bump_base(cur.base, bump_type)
 
