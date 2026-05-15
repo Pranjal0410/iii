@@ -57,27 +57,37 @@ export function getServiceName(span: { service_name?: string; name: string }): s
   return span.service_name || span.name.split('.')[0]
 }
 
+// Status pill colors flow from the design tokens (`--success`, `--error`,
+// `--muted`) so SpanPanel re-themes correctly under `[data-theme="light"]`
+// or in any host that overrides the CSS custom properties. Subtle bg/border
+// shades use `color-mix(in srgb, var(--token) 8%, transparent)` for an
+// 8%-opacity tint without baking in an rgba literal.
 export const STATUS_CONFIG: Record<
   string,
   { color: string; bg: string; border: string; label: string }
 > = {
-  ok: { color: '#22C55E', bg: 'rgba(34,197,94,0.08)', border: 'rgba(34,197,94,0.15)', label: 'OK' },
+  ok: {
+    color: 'var(--success)',
+    bg: 'color-mix(in srgb, var(--success) 8%, transparent)',
+    border: 'color-mix(in srgb, var(--success) 15%, transparent)',
+    label: 'OK',
+  },
   error: {
-    color: '#EF4444',
-    bg: 'rgba(239,68,68,0.08)',
-    border: 'rgba(239,68,68,0.15)',
+    color: 'var(--error)',
+    bg: 'color-mix(in srgb, var(--error) 8%, transparent)',
+    border: 'color-mix(in srgb, var(--error) 15%, transparent)',
     label: 'ERROR',
   },
   unset: {
-    color: '#6B7280',
-    bg: 'rgba(107,114,128,0.08)',
-    border: 'rgba(107,114,128,0.15)',
+    color: 'var(--muted)',
+    bg: 'color-mix(in srgb, var(--muted) 8%, transparent)',
+    border: 'color-mix(in srgb, var(--muted) 15%, transparent)',
     label: 'UNSET',
   },
   default: {
-    color: '#6B7280',
-    bg: 'rgba(107,114,128,0.08)',
-    border: 'rgba(107,114,128,0.15)',
+    color: 'var(--muted)',
+    bg: 'color-mix(in srgb, var(--muted) 8%, transparent)',
+    border: 'color-mix(in srgb, var(--muted) 15%, transparent)',
     label: 'UNKNOWN',
   },
 }

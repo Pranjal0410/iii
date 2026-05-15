@@ -5,18 +5,34 @@
 // active), `TraceGroupsView` previously surfaced only the FIRST trace in
 // `group.trace_ids`. That caused a confusing UX: the row would say
 // "26 spans" but the right-side detail panel would show 4 (just the
-// first trace). This component fixes that by fetching every trace in
-// the group in parallel and rendering each as a collapsible card with
-// its own mini-waterfall.
+// first trace). This component fixes that by rendering one collapsible
+// card per trace in the group; each card fetches its own tree on first
+// expand (lazy), so opening a 100-trace session no longer fires 100
+// simultaneous WebSocket calls.
+//
+// Fetch strategy:
+//
+//   Group click
+//        │
+//        ▼
+//   SessionDetailPanel mounts (no network)
+//        │
+//        ├── TraceCard #1   open=true ──► useQuery enabled ──► fetchTraceTree
+//        ├── TraceCard #2   open=false ─┐
+//        ├── TraceCard #3   open=false  ├── idle, no network until user clicks
+//        └── ...                        ┘
+//
+//   On user click → setOpen(true) → useQuery enabled → fetchTraceTree
+//   On subsequent re-open → TanStack Query cache (30s staleTime) → instant
 //
 // Each TraceCard reuses the existing render path
 // (`treeToWaterfallData` + `WaterfallChart`) so spans behave identically
 // to the single-trace view. Span clicks bubble up via `onSpanClick`,
 // keeping the right-side span detail panel working unchanged.
 
-import { useQueries } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Clock, Loader2, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 
 import { fetchTraceTree, type TraceGroup, type TraceTreeResponse } from '@/api/observability/traces'
 import { useEngineSdk } from '@/api/engine-sdk-provider'
@@ -26,6 +42,7 @@ import {
   type VisualizationSpan,
   type WaterfallData,
 } from '@/lib/traceTransform'
+import type { ISdk } from 'iii-browser-sdk'
 
 interface SessionDetailPanelProps {
   group: TraceGroup
@@ -34,47 +51,13 @@ interface SessionDetailPanelProps {
   selectedSpanId?: string
 }
 
-interface TraceFetchResult {
-  trace_id: string
-  data?: WaterfallData
-  isLoading: boolean
-  error?: string
-}
-
 export function SessionDetailPanel({
   group,
   onClose,
   onSpanClick,
   selectedSpanId,
 }: SessionDetailPanelProps) {
-  // Fetch every trace in the group concurrently. React Query handles
-  // dedup + caching automatically — if the user opens the same session
-  // twice, the second open is instant.
   const sdk = useEngineSdk()
-  const queries = useQueries({
-    queries: group.trace_ids.map((traceId) => ({
-      queryKey: ['trace-tree', traceId],
-      queryFn: () => fetchTraceTree(sdk, traceId),
-      staleTime: 30_000,
-    })),
-  })
-
-  const traces: TraceFetchResult[] = useMemo(
-    () =>
-      group.trace_ids.map((traceId, idx): TraceFetchResult => {
-        const q = queries[idx]
-        if (q.isLoading) return { trace_id: traceId, isLoading: true }
-        if (q.isError)
-          return {
-            trace_id: traceId,
-            isLoading: false,
-            error: q.error instanceof Error ? q.error.message : 'Failed to load',
-          }
-        const data = q.data ? buildWaterfall(q.data) : undefined
-        return { trace_id: traceId, isLoading: false, data }
-      }),
-    [group.trace_ids, queries],
-  )
 
   const totalSpans = group.span_count
   const traceCount = group.trace_ids.length
@@ -103,7 +86,7 @@ export function SessionDetailPanel({
             {errorCount > 0 && (
               <>
                 <span>•</span>
-                <span className="text-red-400">
+                <span className="text-error">
                   {errorCount} error{errorCount === 1 ? '' : 's'}
                 </span>
               </>
@@ -120,18 +103,19 @@ export function SessionDetailPanel({
         </button>
       </div>
 
-      {/* Stacked trace cards */}
+      {/* Stacked trace cards. Each owns its own fetch (lazy, on first
+          expand) so opening a session with N traces doesn't fire N
+          parallel WebSocket calls. The first card auto-opens so the
+          user sees content immediately. */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {traces.map((trace, idx) => (
+        {group.trace_ids.map((traceId, idx) => (
           <TraceCard
-            key={trace.trace_id}
+            key={traceId}
+            sdk={sdk}
             index={idx + 1}
-            trace={trace}
+            traceId={traceId}
             onSpanClick={onSpanClick}
             selectedSpanId={selectedSpanId}
-            // Auto-expand the first card so the user sees content
-            // immediately. Subsequent cards stay collapsed to keep the
-            // initial render light for sessions with many traces.
             defaultOpen={idx === 0}
           />
         ))}
@@ -141,20 +125,41 @@ export function SessionDetailPanel({
 }
 
 interface TraceCardProps {
+  sdk: ISdk
   index: number
-  trace: TraceFetchResult
+  traceId: string
   onSpanClick: (span: VisualizationSpan) => void
   selectedSpanId?: string
   defaultOpen: boolean
 }
 
-function TraceCard({ index, trace, onSpanClick, selectedSpanId, defaultOpen }: TraceCardProps) {
+function TraceCard({
+  sdk,
+  index,
+  traceId,
+  onSpanClick,
+  selectedSpanId,
+  defaultOpen,
+}: TraceCardProps) {
   const [open, setOpen] = useState(defaultOpen)
 
-  const headerLabel = trace.data?.spans[0]?.name ?? 'loading…'
-  const durationMs = trace.data?.total_duration_ms ?? 0
-  const spanCount = trace.data?.span_count ?? 0
-  const tracePreview = trace.trace_id.slice(0, 12)
+  // Lazy fetch: only enabled when the card has been opened at least
+  // once. `staleTime: 30s` keeps re-opens instant; TanStack Query's
+  // cache also dedupes if the same trace appears in two groups
+  // (different attribute values, overlapping trace_ids).
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['trace-tree', traceId],
+    queryFn: () => fetchTraceTree(sdk, traceId),
+    staleTime: 30_000,
+    enabled: open,
+  })
+
+  const waterfall = data ? buildWaterfall(data) : undefined
+  const headerLabel = waterfall?.spans[0]?.name ?? (open ? 'loading…' : 'click to load')
+  const durationMs = waterfall?.total_duration_ms ?? 0
+  const spanCount = waterfall?.span_count ?? 0
+  const tracePreview = traceId.slice(0, 12)
+  const errorMessage = error instanceof Error ? error.message : error ? 'Failed to load' : null
 
   return (
     <div className="border-b border-border">
@@ -181,18 +186,18 @@ function TraceCard({ index, trace, onSpanClick, selectedSpanId, defaultOpen }: T
 
       {open && (
         <div className="bg-sidebar/40">
-          {trace.isLoading && (
+          {isLoading && (
             <div className="flex items-center justify-center py-6 gap-2 text-[11px] text-muted">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               Loading trace…
             </div>
           )}
-          {trace.error && (
-            <div className="px-4 py-3 text-[11px] text-red-400">{trace.error}</div>
+          {errorMessage && (
+            <div className="px-4 py-3 text-[11px] text-error">{errorMessage}</div>
           )}
-          {trace.data && (
+          {waterfall && (
             <WaterfallChart
-              data={trace.data}
+              data={waterfall}
               onSpanClick={onSpanClick}
               selectedSpanId={selectedSpanId}
             />

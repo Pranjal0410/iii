@@ -1,4 +1,5 @@
 import { Clock } from 'lucide-react'
+import { formatPossibleJson } from '@/lib/formatPossibleJson'
 import type { VisualizationSpan } from '@/lib/traceTransform'
 import { toMs } from '@/lib/traceTransform'
 import { formatRelative, formatTimestamp } from '@/lib/traceUtils'
@@ -95,10 +96,9 @@ export function SpanLogsTab({ span }: SpanLogsTabProps) {
  * and pretty-print it inside a <pre> block. Everything else renders as a
  * single-line label/value pair, matching the previous behavior.
  *
- * Keeps DOM cost low: pretty-printing only runs when the value clearly
- * looks like a JSON object/array (`{`/`[` prefix after trim) AND
- * JSON.parse succeeds. Strings that are bare numbers / booleans / plain
- * text fall through to the simple renderer.
+ * Detection lives in `lib/formatPossibleJson.ts` so the heuristic is
+ * testable in isolation and reusable for any other JSON-in-attribute
+ * surface (e.g., span attributes panel, log lines).
  */
 function EventAttributeRow({ attrKey, value }: { attrKey: string; value: unknown }) {
   const formatted = formatPossibleJson(value)
@@ -120,22 +120,4 @@ function EventAttributeRow({ attrKey, value }: { attrKey: string; value: unknown
       </span>
     </div>
   )
-}
-
-function formatPossibleJson(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  if (trimmed.length === 0) return null
-  const first = trimmed[0]
-  // Quick filter: only attempt to parse strings that look like a JSON
-  // object/array. Bare quoted strings (`"hi"`) are still valid JSON but
-  // pretty-printing a single string adds no value and would just put
-  // quotes around it.
-  if (first !== '{' && first !== '[') return null
-  try {
-    const parsed = JSON.parse(trimmed)
-    return JSON.stringify(parsed, null, 2)
-  } catch {
-    return null
-  }
 }
