@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchTraces } from '@/api'
 import { useEngineSdk } from '@/api/engine-sdk-provider'
 import type { TracesFilterParams } from '@/api/observability/traces'
-import { toMs } from '@/lib/traceTransform'
+import { fingerprintTraceList, mapSpanToListItem } from '@/lib/traceListItem'
 
 const DEFAULT_TRACE_LIMIT = 500
 
@@ -79,45 +79,11 @@ export function useTraceData({
     if (!tracesData) return
 
     if (tracesData.spans && tracesData.spans.length > 0) {
-      const traces: TraceListItem[] = tracesData.spans.map((span) => {
-        const startTime = toMs(span.start_time_unix_nano)
-        const endTime = toMs(span.end_time_unix_nano)
-        const duration = endTime - startTime
-
-        const attrs: Record<string, unknown> = {}
-        if (Array.isArray(span.attributes)) {
-          for (const item of span.attributes) {
-            if (Array.isArray(item) && item.length >= 2) {
-              attrs[String(item[0])] = item[1]
-            }
-          }
-        } else if (span.attributes) {
-          Object.assign(attrs, span.attributes)
-        }
-        const functionId = (attrs['faas.invoked_name'] || attrs.function_id) as string | undefined
-        const topic = attrs['messaging.destination.name'] as string | undefined
-
-        return {
-          traceId: span.trace_id,
-          rootOperation: span.name,
-          functionId,
-          topic,
-          status: span.status.toLowerCase() === 'error' ? 'error' : 'ok',
-          startTime,
-          endTime,
-          duration,
-          spanCount: 1,
-          services: [span.service_name || 'unknown'],
-        }
-      })
+      const traces: TraceListItem[] = tracesData.spans.map(mapSpanToListItem)
 
       traces.sort((a, b) => b.startTime - a.startTime)
 
-      // Identity fingerprint: count + every trace_id in order. Earlier
-      // versions sampled only first/last/count, which would have missed
-      // middle-only churn if the sort order ever flipped to ascending.
-      // 500-trace ceiling × 32-char IDs ≈ 16KB per compare — cheap.
-      const fingerprint = `${traces.length}:${traces.map((t) => t.traceId).join(',')}`
+      const fingerprint = fingerprintTraceList(traces)
       if (fingerprint === fingerprintRef.current) return
       fingerprintRef.current = fingerprint
 
