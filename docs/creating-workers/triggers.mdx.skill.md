@@ -8,21 +8,16 @@ trigger on an existing trigger type such as: [`http`](https://workers.iii.dev/wo
 [`cron`](https://workers.iii.dev/workers/iii-cron),
 [queue messages](https://workers.iii.dev/workers/iii-queue),
 [`state` changes](https://workers.iii.dev/workers/iii-state), and any other event source in the
-system.
+system. Less often, you register a new trigger type from your worker so other workers can bind their
+functions to events your worker emits.
+
+This page primarily covers the latter: making your own triggers, if you want to use existing
+triggers in new workers then refer to [Using iii / Triggers](/using-iii/triggers).
 
 <Note>
   For the caller-side mechanics (direct invocation with `worker.trigger` or `iii trigger`, the
   `TriggerAction` variants, gating with conditions, multiple bindings per function), see [Using iii
   / Triggers](/using-iii/triggers).
-</Note>
-
-Less often, you register a new trigger type from your worker so other workers can bind their
-functions to events your worker emits.
-
-This page covers both from the worker-author perspective.
-
-<Note>
-  For the underlying model, see [Understanding iii / Triggers](/understanding-iii/triggers).
 </Note>
 
 {/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
