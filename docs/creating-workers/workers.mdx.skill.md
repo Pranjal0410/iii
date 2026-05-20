@@ -35,9 +35,13 @@ iii worker init my-worker --language typescript
 
 Supported languages: `typescript` (`ts`), `javascript` (`js`), `python` (`py`), `rust` (`rs`).
 
-The positional `NAME` is the target directory; pass `--directory` to override it. Re-running
-`iii worker init` in a directory that already holds an iii worker (has `.iii/worker.ini`) is
-idempotent. Use `--allow-non-empty` to scaffold into any other non-empty directory.
+The positional `NAME` is the target directory; pass `--directory` to override it.
+
+Re-running `iii worker init` on a directory that already holds an iii worker (ie. has
+`.iii/worker.ini`) will make no changes to the worker.
+
+Worker init will fail by default when targeting a non-empty directory, use `--allow-non-empty` to
+scaffold into any other non-empty directory.
 
 <Note>
   To install an existing worker from the registry instead of scaffolding a new one, use `iii worker
