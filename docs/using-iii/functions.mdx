@@ -15,11 +15,7 @@ handler.
 
 <Note>
   Some trigger types are: [`iii trigger`](/using-iii/cli), [`worker.trigger`](/using-iii/triggers),
-  iii-http,
-  iii-cron,
-  iii-queue,
-  iii-state,
-  iii-stream.
+  iii-http, iii-cron, iii-queue, iii-state, iii-stream.
 </Note>
 
 ## Register a function
@@ -93,10 +89,53 @@ stored with the function and feed the iii console and the agent-readable skills.
 
 <Note>
   For how to call a registered function from worker code or the terminal (with optional delivery
-  actions like fire-and-forget or queue-routed), see
-  [Triggers / Call a function directly](/using-iii/triggers#call-a-function-directly).
+  actions like fire-and-forget or queue-routed), see [Triggers / Call a function
+  directly](/using-iii/triggers#call-a-function-directly).
 </Note>
 
-## Built-in functions
+## Common functions
 
-{/* TODO: index the `engine::*`, `state::*`, `stream::*`, `queue::*`, `pubsub::*`, and `observability::*` functions every iii system exposes. Group by namespace; one row per function with id, what it does, and a link to its detailed reference (the publishing worker's Worker Docs). */}
+A handful of functions ship with the iii engine and the standard workers. You'll likely call them
+from almost every iii project. They look like any function you'd register yourself and are invoked
+the same way (via [`iii trigger`](/using-iii/cli) or
+[`worker.trigger`](/using-iii/triggers#call-a-function-directly)). The only thing special about them
+is that you didn't have to register them.
+
+### Engine built-ins (`engine::*`)
+
+The engine itself registers a small set of introspection and lifecycle functions. Full request and
+response schemas are in the
+[engine protocol reference](/sdk-reference/engine-sdk#engine-discovery-functions).
+
+| Function                      | What it does                                                                                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `engine::functions::list`     | List every registered function. Pass `{ include_internal: true }` to include engine internals.                             |
+| `engine::workers::list`       | List every connected worker with its metrics. Pass `{ worker_id: "<uuid>" }` to look one up.                               |
+| `engine::triggers::list`      | List every registered trigger binding.                                                                                     |
+| `engine::trigger-types::list` | List every advertised trigger type along with its config and call-request schemas.                                         |
+| `engine::channels::create`    | Allocate a streaming channel reader / writer pair. The SDK wraps this as `worker.createChannel()`; rarely called directly. |
+| `engine::workers::register`   | Publish the calling worker's metadata (runtime, version, OS, PID). The SDK calls this automatically on connect.            |
+
+The engine also publishes two subscription triggers in the same family. Bind a function to one of
+these to react to the registry changing:
+
+| Trigger                       | Fires when                                |
+| ----------------------------- | ----------------------------------------- |
+| `engine::functions-available` | A function is registered or unregistered. |
+| `engine::workers-available`   | A worker connects or disconnects.         |
+
+### Common workers
+
+Each of these is published by a separate worker. Function ids, payload shapes, and per-function
+behaviour are in the worker's own docs at [workers.iii.dev](https://workers.iii.dev):
+
+- **State**: KV-style state with scoped namespaces and reactive triggers on create/update/delete.
+  See [iii-state](https://workers.iii.dev/workers/iii-state).
+- **Stream**: Real-time push to connected clients over WebSocket. See
+  [iii-stream](https://workers.iii.dev/workers/iii-stream).
+- **Queue**: Durable, ordered job processing with retries, concurrency limits, and a dead-letter
+  queue. See [iii-queue](https://workers.iii.dev/workers/iii-queue).
+- **Pub/Sub**: Lightweight in-engine topic subscription for fan-out without durability guarantees.
+  See [iii-pubsub](https://workers.iii.dev/workers/iii-pubsub).
+- **Observability**: Traces, logs, metrics, alerts, sampling rules, and rollups. See
+  [iii-observability](https://workers.iii.dev/workers/iii-observability).

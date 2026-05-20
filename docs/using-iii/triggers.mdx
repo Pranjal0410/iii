@@ -96,9 +96,9 @@ Some common actions are:
 ## Register a trigger
 
 <Note>
-  If you're authoring a worker, the same operation appears in [Creating Workers /
-  Triggers](/creating-workers/triggers#bind-a-function-to-an-existing-trigger-type) where it sits
-  next to the rest of the worker's startup work.
+  If you're authoring a worker, you'll want to refer to [Creating Workers /
+  Triggers](/creating-workers/triggers#bind-a-function-to-an-existing-trigger-type) to learn the
+  difference between registering a trigger, and registering a trigger type.
 </Note>
 
 Functions can also run when a trigger is satisfied. A trigger can be any event that happens such as
@@ -121,6 +121,7 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
       config: { api_path: "/math/add", http_method: "POST" },
     });
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -138,6 +139,7 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
         "config": {"api_path": "/math/add", "http_method": "POST"},
     })
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
