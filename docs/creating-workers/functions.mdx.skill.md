@@ -5,13 +5,13 @@
 
 ## What "writing a function" means
 
-A worker contributes capability by registering functions. Each function has an `id` of the form
-`service::name`, a handler that receives the payload and returns a result, and optional JSON
-Schemas that describe the request and response shape.
+A worker contributes capabilities to a iii system by registering functions. Each function has an
+`id` of the form `service::name`, a handler that receives the payload and returns a result, and
+optional JSON Schemas that describe the request and response shape.
 
 For how callers invoke functions (`worker.trigger` / `iii trigger` / event-bound triggers), see
-[Using iii / Functions](/using-iii/functions) and
-[Using iii / Triggers](/using-iii/triggers). This page is about the authoring surface.
+[Using iii / Functions](/using-iii/functions) and [Using iii / Triggers](/using-iii/triggers). This
+page is about the authoring surface.
 
 {/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
 
@@ -32,6 +32,7 @@ call, HTTP trigger, cron, queue message).
       return { c: payload.a + payload.b };
     });
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -48,6 +49,7 @@ call, HTTP trigger, cron, queue message).
 
     worker.register_function("math::add", add_handler)
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
@@ -60,6 +62,7 @@ call, HTTP trigger, cron, queue message).
         Ok(serde_json::json!({ "c": input.a + input.b }))
     }))?;
     ```
+
   </Tab>
 </Tabs>
 
@@ -100,6 +103,7 @@ agent-readable skills.
       },
     );
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -126,6 +130,7 @@ agent-readable skills.
         },
     )
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
@@ -151,6 +156,7 @@ agent-readable skills.
         })),
     )?;
     ```
+
   </Tab>
 </Tabs>
 
@@ -164,15 +170,15 @@ The schemas also feed the iii console and the agent-readable skills.
 
 A function returns either a value (which the handler is responsible for shaping to match its
 documented response schema) or an error. Errors raised inside the handler are propagated to the
-caller as invocation errors with the worker's stack trace; the engine doesn't swallow them. Use
-this distinction to express expected failures (return a structured error value) versus unexpected
-ones (throw / raise / return `Err`).
+caller as invocation errors with the worker's stack trace; the engine doesn't swallow them. Use this
+distinction to express expected failures (return a structured error value) versus unexpected ones
+(throw / raise / return `Err`).
 
 ## Unregister a function
 
-`registerFunction` returns a handle with an `unregister()` method that removes the function from
-the engine at runtime. When the worker disconnects, all of its functions are removed automatically
-and pending invocations error out.
+`registerFunction` returns a handle with an `unregister()` method that removes the function from the
+engine at runtime. When the worker disconnects, all of its functions are removed automatically and
+pending invocations error out.
 
 <Tabs>
   <Tab title="Node / TypeScript">
@@ -183,6 +189,7 @@ and pending invocations error out.
 
     add.unregister();
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -190,6 +197,7 @@ and pending invocations error out.
 
     add.unregister()
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
@@ -199,6 +207,7 @@ and pending invocations error out.
 
     add.unregister();
     ```
+
   </Tab>
 </Tabs>
 

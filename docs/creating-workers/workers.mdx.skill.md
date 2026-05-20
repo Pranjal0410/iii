@@ -19,6 +19,31 @@ Once connected, a worker exposes:
   [Rust](/sdk-reference/rust-sdk), or [Browser](/sdk-reference/browser-sdk).
 </Note>
 
+## Scaffold a new worker
+
+`iii worker init` creates a new standalone worker from scratch. The command writes a
+language-specific project directory with the iii SDK installed, an `iii.worker.yaml` manifest, and
+example function and trigger registrations you can replace with your own.
+
+```bash
+# Interactive: prompts for the language
+iii worker init my-worker
+
+# Fully scripted: pass --language to skip the prompt
+iii worker init my-worker --language typescript
+```
+
+Supported languages: `typescript` (`ts`), `javascript` (`js`), `python` (`py`), `rust` (`rs`).
+
+The positional `NAME` is the target directory; pass `--directory` to override it. Re-running
+`iii worker init` in a directory that already holds an iii worker (has `.iii/worker.ini`) is
+idempotent. Use `--allow-non-empty` to scaffold into any other non-empty directory.
+
+<Note>
+  To install an existing worker from the registry instead of scaffolding a new one, use `iii worker
+  add`. See [Using iii / Workers](/using-iii/workers#finding-workers) for the registry surface.
+</Note>
+
 ## Connecting to the engine
 
 A worker connects to the engine over WebSocket. The convention is to set the engine URL via the
@@ -96,7 +121,7 @@ get the current state of the registry. Each returns a list:
   <Tabs>
     <Tab title="Node / TypeScript">
       ```typescript
-      // engine::workers::list — pass { worker_id: "<uuid>" } to look up one worker
+      // engine::workers::list, pass { worker_id: "<uuid>" } to look up one worker
       const { workers } = await worker.trigger({
         function_id: "engine::workers::list",
         payload: {},
@@ -123,7 +148,7 @@ get the current state of the registry. Each returns a list:
     </Tab>
     <Tab title="Python">
       ```python
-      # engine::workers::list — pass {"worker_id": "<uuid>"} to look up one worker
+      # engine::workers::list, pass {"worker_id": "<uuid>"} to look up one worker
       workers = worker.trigger({
           "function_id": "engine::workers::list",
           "payload": {},
@@ -153,7 +178,7 @@ get the current state of the registry. Each returns a list:
       use iii_sdk::TriggerRequest;
       use serde_json::json;
 
-      // engine::workers::list — pass json!({ "worker_id": "<uuid>" }) to look up one worker
+      // engine::workers::list, pass json!({ "worker_id": "<uuid>" }) to look up one worker
       let workers = worker
           .trigger(TriggerRequest {
               function_id: "engine::workers::list".into(),
@@ -194,6 +219,7 @@ get the current state of the registry. Each returns a list:
           .await?;
       ```
     </Tab>
+
   </Tabs>
 </Accordion>
 
@@ -424,14 +450,49 @@ process that uses the iii SDK all behave identically with the Engine.
 
 {/* TODO: link to the canonical iii.worker.yaml reference page once it exists. */}
 
-## Run an ephemeral worker
+## Shutting down a worker
 
-For one-shot jobs (Kubernetes Jobs, serverless containers, scheduled scripts), an SDK worker can
-connect to a remote engine, register its functions, do the work, and exit. The engine cleans up the
-worker's registrations on disconnect.
+Call the SDK's `shutdown` to close the WebSocket cleanly. The engine removes the worker's Functions
+and Triggers from the registry, fires `engine::workers-available` with `worker_disconnected`, and
+cancels in-flight invocations targeting them with `invocation_stopped`.
 
-Set `III_URL` to point the worker at the remote engine (see
-[Connecting to the engine](#connecting-to-the-engine)), register the work the job needs to expose,
-and let the process exit when the job is done.
+Without `shutdown`, an abrupt process exit reaches the same state once the engine notices the
+dropped socket; graceful shutdown makes it deterministic and faster.
+
+<Tabs>
+  <Tab title="Node / TypeScript">
+    ```typescript
+    process.on("SIGTERM", async () => {
+      await worker.shutdown();
+      process.exit(0);
+    });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import signal
+
+    def _on_term(*_):
+        worker.shutdown()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _on_term)
+    ```
+
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    // Rust threads do not keep the process alive on their own; await this
+    // before `main` returns so the connection thread exits cleanly.
+    worker.shutdown_async().await;
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Shutdown is very useful for **One-shot / ephemeral workers**. Kubernetes Jobs, serverless
+  containers, or scheduled scripts can connect just like any other Worker, do their work, and
+  `shutdown()`.
+</Note>
 
 {/* TODO: confirm the SDK shutdown call (e.g. `worker.shutdown()`) and add a minimal Node / TypeScript, Python, Rust example that registers a function, awaits a single invocation, and exits cleanly. */}

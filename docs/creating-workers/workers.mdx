@@ -23,6 +23,31 @@ Once connected, a worker exposes:
   [Rust](/sdk-reference/rust-sdk), or [Browser](/sdk-reference/browser-sdk).
 </Note>
 
+## Scaffold a new worker
+
+`iii worker init` creates a new standalone worker from scratch. The command writes a
+language-specific project directory with the iii SDK installed, an `iii.worker.yaml` manifest, and
+example function and trigger registrations you can replace with your own.
+
+```bash
+# Interactive: prompts for the language
+iii worker init my-worker
+
+# Fully scripted: pass --language to skip the prompt
+iii worker init my-worker --language typescript
+```
+
+Supported languages: `typescript` (`ts`), `javascript` (`js`), `python` (`py`), `rust` (`rs`).
+
+The positional `NAME` is the target directory; pass `--directory` to override it. Re-running
+`iii worker init` in a directory that already holds an iii worker (has `.iii/worker.ini`) is
+idempotent. Use `--allow-non-empty` to scaffold into any other non-empty directory.
+
+<Note>
+  To install an existing worker from the registry instead of scaffolding a new one, use `iii worker
+  add`. See [Using iii / Workers](/using-iii/workers#finding-workers) for the registry surface.
+</Note>
+
 ## Connecting to the engine
 
 A worker connects to the engine over WebSocket. The convention is to set the engine URL via the
@@ -100,7 +125,7 @@ get the current state of the registry. Each returns a list:
   <Tabs>
     <Tab title="Node / TypeScript">
       ```typescript
-      // engine::workers::list — pass { worker_id: "<uuid>" } to look up one worker
+      // engine::workers::list, pass { worker_id: "<uuid>" } to look up one worker
       const { workers } = await worker.trigger({
         function_id: "engine::workers::list",
         payload: {},
@@ -127,7 +152,7 @@ get the current state of the registry. Each returns a list:
     </Tab>
     <Tab title="Python">
       ```python
-      # engine::workers::list — pass {"worker_id": "<uuid>"} to look up one worker
+      # engine::workers::list, pass {"worker_id": "<uuid>"} to look up one worker
       workers = worker.trigger({
           "function_id": "engine::workers::list",
           "payload": {},
@@ -157,7 +182,7 @@ get the current state of the registry. Each returns a list:
       use iii_sdk::TriggerRequest;
       use serde_json::json;
 
-      // engine::workers::list — pass json!({ "worker_id": "<uuid>" }) to look up one worker
+      // engine::workers::list, pass json!({ "worker_id": "<uuid>" }) to look up one worker
       let workers = worker
           .trigger(TriggerRequest {
               function_id: "engine::workers::list".into(),
