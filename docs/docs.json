@@ -266,18 +266,19 @@
                 "pages": [
                   "understanding-iii/index",
                   "understanding-iii/workers",
-                  "understanding-iii/functions",
                   "understanding-iii/triggers",
-                  "understanding-iii/channels",
-                  "understanding-iii/engine"
+                  "understanding-iii/functions",
+                  "understanding-iii/engine",
+                  "understanding-iii/channels"
                 ]
               },
               {
                 "group": "Creating Workers",
                 "pages": [
+                  "creating-workers/index",
                   "creating-workers/workers",
-                  "creating-workers/functions",
-                  "creating-workers/triggers"
+                  "creating-workers/triggers",
+                  "creating-workers/functions"
                 ]
               }
             ]
