@@ -97,25 +97,25 @@ get the current state of the registry. Each returns a list:
     <Tab title="Node / TypeScript">
       ```typescript
       // engine::workers::list — pass { worker_id: "<uuid>" } to look up one worker
-      const { workers } = await iii.trigger({
+      const { workers } = await worker.trigger({
         function_id: "engine::workers::list",
         payload: {},
       });
 
       // engine::functions::list
-      const { functions } = await iii.trigger({
+      const { functions } = await worker.trigger({
         function_id: "engine::functions::list",
         payload: { include_internal: false },
       });
 
       // engine::triggers::list
-      const { triggers } = await iii.trigger({
+      const { triggers } = await worker.trigger({
         function_id: "engine::triggers::list",
         payload: { include_internal: false },
       });
 
       // engine::trigger-types::list
-      const { trigger_types } = await iii.trigger({
+      const { trigger_types } = await worker.trigger({
         function_id: "engine::trigger-types::list",
         payload: { include_internal: false },
       });
@@ -124,25 +124,25 @@ get the current state of the registry. Each returns a list:
     <Tab title="Python">
       ```python
       # engine::workers::list — pass {"worker_id": "<uuid>"} to look up one worker
-      workers = iii.trigger({
+      workers = worker.trigger({
           "function_id": "engine::workers::list",
           "payload": {},
       })["workers"]
 
       # engine::functions::list
-      functions = iii.trigger({
+      functions = worker.trigger({
           "function_id": "engine::functions::list",
           "payload": {"include_internal": False},
       })["functions"]
 
       # engine::triggers::list
-      triggers = iii.trigger({
+      triggers = worker.trigger({
           "function_id": "engine::triggers::list",
           "payload": {"include_internal": False},
       })["triggers"]
 
       # engine::trigger-types::list
-      trigger_types = iii.trigger({
+      trigger_types = worker.trigger({
           "function_id": "engine::trigger-types::list",
           "payload": {"include_internal": False},
       })["trigger_types"]
@@ -154,7 +154,7 @@ get the current state of the registry. Each returns a list:
       use serde_json::json;
 
       // engine::workers::list — pass json!({ "worker_id": "<uuid>" }) to look up one worker
-      let workers = iii
+      let workers = worker
           .trigger(TriggerRequest {
               function_id: "engine::workers::list".into(),
               payload: json!({}),
@@ -164,7 +164,7 @@ get the current state of the registry. Each returns a list:
           .await?;
 
       // engine::functions::list
-      let functions = iii
+      let functions = worker
           .trigger(TriggerRequest {
               function_id: "engine::functions::list".into(),
               payload: json!({ "include_internal": false }),
@@ -174,7 +174,7 @@ get the current state of the registry. Each returns a list:
           .await?;
 
       // engine::triggers::list
-      let triggers = iii
+      let triggers = worker
           .trigger(TriggerRequest {
               function_id: "engine::triggers::list".into(),
               payload: json!({ "include_internal": false }),
@@ -184,7 +184,7 @@ get the current state of the registry. Each returns a list:
           .await?;
 
       // engine::trigger-types::list
-      let trigger_types = iii
+      let trigger_types = worker
           .trigger(TriggerRequest {
               function_id: "engine::trigger-types::list".into(),
               payload: json!({ "include_internal": false }),
@@ -216,7 +216,7 @@ cancellation. Retrying will fail until the Worker that owns this function reconn
       import { IIIInvocationError } from "iii-sdk";
 
       try {
-        const result = await iii.trigger({
+        const result = await worker.trigger({
           function_id: "math::add",
           payload: { a: 1, b: 2 },
         });
@@ -235,7 +235,7 @@ cancellation. Retrying will fail until the Worker that owns this function reconn
       from iii import IIIInvocationError
 
       try:
-          result = iii.trigger({
+          result = worker.trigger({
               "function_id": "math::add",
               "payload": {"a": 1, "b": 2},
           })
@@ -252,7 +252,7 @@ cancellation. Retrying will fail until the Worker that owns this function reconn
       use iii_sdk::{IIIError, TriggerRequest};
       use serde_json::json;
 
-      let result = iii
+      let result = worker
           .trigger(TriggerRequest {
               function_id: "math::add".into(),
               payload: json!({ "a": 1, "b": 2 }),
@@ -291,7 +291,7 @@ as they happen. This is particularly useful for continuing work when a Worker co
   <Tabs>
     <Tab title="Node / TypeScript">
       ```typescript
-      iii.registerFunction(
+      worker.registerFunction(
         "discovery::on-workers",
         async (data: { event: string; worker_id: string }) => {
           if (data.event === "worker_connected") {
@@ -299,20 +299,20 @@ as they happen. This is particularly useful for continuing work when a Worker co
           }
         },
       );
-      iii.registerTrigger({
+      worker.registerTrigger({
         type: "engine::workers-available",
         function_id: "discovery::on-workers",
         config: {},
       });
 
-      iii.registerFunction(
+      worker.registerFunction(
         "discovery::on-functions",
         async (data: { event: string; functions: { function_id: string }[] }) => {
           // `functions` is the full snapshot after the change.
           const ids = data.functions.map((f) => f.function_id);
         },
       );
-      iii.registerTrigger({
+      worker.registerTrigger({
         type: "engine::functions-available",
         function_id: "discovery::on-functions",
         config: {},
@@ -326,8 +326,8 @@ as they happen. This is particularly useful for continuing work when a Worker co
               # A Worker just joined the registry; its Functions are callable now.
               pass
 
-      iii.register_function("discovery::on-workers", on_workers)
-      iii.register_trigger({
+      worker.register_function("discovery::on-workers", on_workers)
+      worker.register_trigger({
           "type": "engine::workers-available",
           "function_id": "discovery::on-workers",
           "config": {},
@@ -337,8 +337,8 @@ as they happen. This is particularly useful for continuing work when a Worker co
           # `functions` is the full snapshot after the change.
           ids = [f["function_id"] for f in data.get("functions", [])]
 
-      iii.register_function("discovery::on-functions", on_functions)
-      iii.register_trigger({
+      worker.register_function("discovery::on-functions", on_functions)
+      worker.register_trigger({
           "type": "engine::functions-available",
           "function_id": "discovery::on-functions",
           "config": {},
@@ -358,7 +358,7 @@ as they happen. This is particularly useful for continuing work when a Worker co
       #[derive(Deserialize, JsonSchema)]
       struct FunctionsAvailable { event: String, functions: Vec<Value> }
 
-      iii.register_function(RegisterFunction::new_async(
+      worker.register_function(RegisterFunction::new_async(
           "discovery::on-workers",
           |input: WorkersAvailable| async move {
               if input.event == "worker_connected" {
@@ -367,14 +367,14 @@ as they happen. This is particularly useful for continuing work when a Worker co
               Ok::<_, String>(())
           },
       ));
-      iii.register_trigger(RegisterTriggerInput {
+      worker.register_trigger(RegisterTriggerInput {
           trigger_type: "engine::workers-available".into(),
           function_id: "discovery::on-workers".into(),
           config: json!({}),
           metadata: None,
       })?;
 
-      iii.register_function(RegisterFunction::new_async(
+      worker.register_function(RegisterFunction::new_async(
           "discovery::on-functions",
           |input: FunctionsAvailable| async move {
               // `functions` is the full snapshot after the change.
@@ -382,7 +382,7 @@ as they happen. This is particularly useful for continuing work when a Worker co
               Ok::<_, String>(())
           },
       ));
-      iii.register_trigger(RegisterTriggerInput {
+      worker.register_trigger(RegisterTriggerInput {
           trigger_type: "engine::functions-available".into(),
           function_id: "discovery::on-functions".into(),
           config: json!({}),

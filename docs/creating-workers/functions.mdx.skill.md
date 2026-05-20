@@ -13,6 +13,8 @@ For how callers invoke functions (`worker.trigger` / `iii trigger` / event-bound
 [Using iii / Functions](/using-iii/functions) and
 [Using iii / Triggers](/using-iii/triggers). This page is about the authoring surface.
 
+{/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
+
 ## Register a function
 
 Inside the worker, register the function with the SDK. The `id` is what callers pass as
@@ -71,6 +73,8 @@ agent-readable skills.
   Runtime validation is not yet supported. Attached schemas are metadata only; the engine does not
   reject payloads or handler return values that don't match them.
 </Note>
+
+{/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
 
 <Tabs>
   <Tab title="Node / TypeScript">
@@ -151,6 +155,10 @@ agent-readable skills.
 </Tabs>
 
 The schemas also feed the iii console and the agent-readable skills.
+
+## HTTP-invoked functions
+
+{/* TODO: cover the request/response shape iii-http delivers to a function bound on an `http` trigger: request fields available on the payload (method, headers, body), how to return non-JSON, how to set status codes, and any per-binding config options that affect the contract. */}
 
 ## Return values and errors
 

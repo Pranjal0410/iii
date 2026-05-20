@@ -339,3 +339,41 @@ a:has(> span.bg-primary-dark):hover svg {
 [data-fade-overlay] {
   display: none !important;
 }
+
+/* Match accordion borders to table borders. Container is transparent so its
+   children control fill: trigger/header always uses inline-code panel bg,
+   expanded content uses the page bg. */
+details,
+[data-component-part="accordion"],
+[data-component-part="accordion-group"] > * {
+  background-color: transparent !important;
+  border: 1px solid var(--iii-rule-2) !important;
+  box-shadow: none !important;
+  color: var(--iii-ink) !important;
+}
+
+details > summary,
+[data-component-part="accordion"] > [data-component-part="accordion-trigger"],
+[data-component-part="accordion"] > button:first-child {
+  background-color: var(--iii-panel) !important;
+  color: var(--iii-ink) !important;
+}
+
+details[open] > summary,
+[data-component-part="accordion"][data-state="open"] > [data-component-part="accordion-trigger"],
+[data-component-part="accordion"][data-state="open"] > button:first-child {
+  border-bottom: 1px solid var(--iii-rule-2) !important;
+}
+
+details > *:not(summary),
+[data-component-part="accordion-content"] {
+  background-color: var(--iii-bg) !important;
+}
+
+[data-component-part="accordion-group"] {
+  border: 0 !important;
+}
+
+[data-component-part="accordion-group"] > * + * {
+  border-top: 0 !important;
+}

@@ -3,14 +3,74 @@
 
 ## What "writing a trigger" means
 
-Workers don't only call functions; they can also _source_ events. When a worker advertises a
-trigger type (e.g. `webhook`, a custom schedule, or any external event source you implement), any
-other worker can bind its functions to that type. The engine routes binding requests to your
-trigger type's handler, and your worker invokes the bound functions when the underlying event
-fires.
+A worker uses triggers two ways. Most of the time, you bind the worker's functions to trigger types
+that other workers already publish: [`http`](https://workers.iii.dev/workers/iii-http),
+[`cron`](https://workers.iii.dev/workers/iii-cron), [queue
+messages](https://workers.iii.dev/workers/iii-queue),
+[`state` changes](https://workers.iii.dev/workers/iii-state), and any other event source in the
+system. Less often, you publish a new trigger type from your worker so other workers can bind their
+functions to events your worker emits.
 
-This page is about authoring new trigger types from inside your worker. For invoking functions and
-binding triggers to functions from the consumer side, see [Using iii / Triggers](/using-iii/triggers).
+This page covers both from the worker-author perspective. For the caller-side mechanics (direct
+invocation with `worker.trigger` or `iii trigger`, the `TriggerAction` variants, gating with
+conditions, multiple bindings per function), see [Using iii /
+Triggers](/using-iii/triggers). For the underlying model, see
+[Understanding iii / Triggers](/understanding-iii/triggers).
+
+{/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
+
+## Bind a function to an existing trigger type
+
+Most workers consume trigger types that other workers already publish: `http` from iii-http to
+expose a function as an endpoint, `cron` from iii-cron to run a function on a schedule, queue
+triggers from iii-queue to fire a function on each message, `state` from iii-state to react to data
+changes. Bind one of your worker's functions to a trigger type with
+`worker.registerTrigger({ type, function_id, config })`. The worker that publishes the trigger type
+must be connected when you register; otherwise the registration fails.
+
+<Tabs>
+  <Tab title="Node / TypeScript">
+    ```typescript
+    worker.registerTrigger({
+      type: "http",
+      function_id: "math::add",
+      config: { api_path: "/math/add", http_method: "POST" },
+    });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    worker.register_trigger({
+        "type": "http",
+        "function_id": "math::add",
+        "config": {"api_path": "/math/add", "http_method": "POST"},
+    })
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use iii_sdk::RegisterTriggerInput;
+    use serde_json::json;
+
+    worker.register_trigger(RegisterTriggerInput {
+        trigger_type: "http".into(),
+        function_id: "math::add".into(),
+        config: json!({ "api_path": "/math/add", "http_method": "POST" }),
+        metadata: None,
+    })?;
+    ```
+  </Tab>
+</Tabs>
+
+The `config` shape is defined per trigger type and documented in each publishing worker's
+[Worker Docs](https://workers.iii.dev).
+
+<Note>
+  Other binding mechanics are covered in [Using iii /
+  Triggers](/using-iii/triggers#register-a-trigger): the unregister handle, binding multiple
+  triggers to the same function, gating with `condition_function_id`, and the `TriggerAction`
+  variants (`Void`, `Enqueue`, etc.).
+</Note>
 
 ## Declare a trigger type
 
@@ -114,6 +174,8 @@ trigger type, or to tear the type down.
 
 For typed `config` and call-payload schemas, attach Pydantic, Zod, or `schemars::JsonSchema` types
 to the registration in your language of choice. See each SDK's reference for the exact builder.
+
+{/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
 
 ## Dispatch events to bound functions
 

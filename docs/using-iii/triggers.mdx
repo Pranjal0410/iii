@@ -85,7 +85,7 @@ Some common actions are:
 - **`TriggerAction.Void()`**. Fire-and-forget. The call returns immediately; the function still runs
   but the caller doesn't see the result.
 - **`TriggerAction.Enqueue({ queue })`**. Provided by
-  iii-queue. Routes the invocation through a named
+  [iii-queue](https://workers.iii.dev/workers/iii-queue). Routes the invocation through a named
   queue with retries; the call returns once the message is enqueued.
 
 <Note>
@@ -94,6 +94,12 @@ Some common actions are:
 </Note>
 
 ## Register a trigger
+
+<Note>
+  If you're authoring a worker, the same operation appears in [Creating Workers /
+  Triggers](/creating-workers/triggers#bind-a-function-to-an-existing-trigger-type) where it sits
+  next to the rest of the worker's startup work.
+</Note>
 
 Functions can also run when a trigger is satisfied. A trigger can be any event that happens such as
 a request to an `http` endpoint, a `cron` job, a change in `state`, or any other trigger that a
@@ -153,7 +159,7 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
 </Tabs>
 
 Per-type configuration is documented in each worker's Worker Docs (e.g.
-iii-http for the `http` type).
+[iii-http](https://workers.iii.dev/workers/iii-http) for the `http` type).
 
 ## Bind multiple triggers to one function
 

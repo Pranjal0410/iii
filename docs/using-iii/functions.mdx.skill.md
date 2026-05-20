@@ -94,3 +94,7 @@ stored with the function and feed the iii console and the agent-readable skills.
   actions like fire-and-forget or queue-routed), see
   [Triggers / Call a function directly](/using-iii/triggers#call-a-function-directly).
 </Note>
+
+## Built-in functions
+
+{/* TODO: index the `engine::*`, `state::*`, `stream::*`, `queue::*`, `pubsub::*`, and `observability::*` functions every iii system exposes. Group by namespace; one row per function with id, what it does, and a link to its detailed reference (the publishing worker's Worker Docs). */}

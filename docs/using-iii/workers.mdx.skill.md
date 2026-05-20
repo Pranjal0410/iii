@@ -67,7 +67,7 @@ iii worker restart <name>   # stop then start
 ```
 
 <Note>
-  To call functions inside running workers (directly with `iii.trigger` / `iii trigger`, or by
+  To call functions inside running workers (directly with `worker.trigger` / `iii trigger`, or by
   binding them to events with optional condition gates), see [Triggers](/using-iii/triggers).
 </Note>
 
