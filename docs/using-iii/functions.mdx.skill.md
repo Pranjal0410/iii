@@ -73,12 +73,6 @@ Functions can carry JSON Schemas for their request payload and response shape. T
 stored with the function and feed the iii console and the agent-readable skills.
 
 <Note>
-  Runtime validation is not yet supported. Attached schemas are metadata only; the engine does not
-  reject payloads or responses that don't match. Treat the schemas as contract documentation for
-  callers, agents, and the console until validation lands.
-</Note>
-
-<Note>
   For how to attach schemas when registering a function, see [Creating Workers /
   Functions](/creating-workers/functions#attach-request-and-response-schemas).
 </Note>

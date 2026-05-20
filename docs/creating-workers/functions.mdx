@@ -12,8 +12,7 @@ A worker contributes capabilities to a iii system by registering functions. Each
 optional JSON Schemas that describe the request and response shape.
 
 For how callers invoke functions (`worker.trigger` / `iii trigger` / event-bound triggers), see
-[Using iii / Functions](/using-iii/functions) and [Using iii / Triggers](/using-iii/triggers). This
-page is about the authoring surface.
+[Using iii / Triggers](/using-iii/triggers). This page is about the authoring new functions.
 
 {/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
 
@@ -76,7 +75,8 @@ agent-readable skills.
 
 <Note>
   Runtime validation is not yet supported. Attached schemas are metadata only; the engine does not
-  reject payloads or handler return values that don't match them.
+  reject payloads or handler return values that don't match them. Treat the schemas as contract
+  documentation for callers, agents, and the console.
 </Note>
 
 {/* TODO: Review against real SDK/CLI surface (now, and post-sdk rework, separately) */}
