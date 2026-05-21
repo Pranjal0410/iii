@@ -16,15 +16,14 @@ For how callers invoke functions (`worker.trigger` / `iii trigger` / event-bound
 
 ## Register a function
 
-Inside the worker, register the function with the SDK. The `id` is what callers pass as
-`function_id`; the handler signature is the same regardless of how the invocation arrived (direct
-call, HTTP trigger, cron, queue message).
+Inside the worker, register the function with the SDK. The `id` is what triggers will use as a
+`function_id`.
 
 <Note>
-  One exception: [iii-http](https://workers.iii.dev/workers/iii-http) wraps the request as a richer
-  payload so handlers bound to `http` triggers can react to the full HTTP context. See the [iii-http
-  Worker Docs](https://workers.iii.dev/workers/iii-http) for the exact request (method, headers,
-  query_params, body, etc.) and response (status_code, body, headers) payload shapes.
+  Each type of trigger has its own expected argument structure for a given function. For example
+  `cron` will call functions without arguments, while `http` will provide a standard http-style
+  payload that includes `body`, `headers`, and other properties. For each worker visit their
+  respective page at [workers.iii.dev](https://workers.iii.dev/) for their expected payload.
 </Note>
 
 <Tabs>
@@ -265,8 +264,8 @@ trigger type (queue, cron, state, http) all work without any other changes.
 While a normal function takes an `id` and a `handler`, http invokeable functions take an `id` and a
 `HttpInvocationConfig`.
 
-| Field        | Type                                              | Default  | Description                                                                                             |
-| ------------ | ------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| Field        | Type                                              | Default    | Description                                                                                             |
+| ------------ | ------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------- |
 | `url`        | `string`                                          | (required) | Endpoint the engine calls when the function is invoked.                                                 |
 | `method`     | `"GET" \| "POST" \| "PUT" \| "PATCH" \| "DELETE"` | `"POST"`   | HTTP method.                                                                                            |
 | `timeout_ms` | `number`                                          | `30000`    | Per-request timeout in milliseconds.                                                                    |

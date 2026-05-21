@@ -130,20 +130,23 @@ worker that provides it to be connected. For example if you add `http` triggers 
 worker then you can now expose endpoints for your function just as you would in a web framework like
 Express or FastAPI.
 
-## Versioning and pinning
+## Versioning
 
-Workers are published with semver versions. Installing without a version specifier picks the latest
-release. Append `@<version>` to a registry name to pin a specific release rather than tracking the
-latest:
+iii workers follow semver. A project records the resolved version of every managed worker in
+`iii.lock`, which makes installs reproducible across machines and platforms.
+
+### Version pins
+
+Installing without a version specifier picks the latest release. Append `@<version>` to a registry
+name to pin a specific release rather than tracking the latest:
 
 ```bash
 iii worker add iii-state@1.2.0
 ```
 
-The pin is recorded in `iii.lock` and replays on every subsequent install, so the same deployment of
-an iii system is reproducible across machines.
+The pin is recorded in `iii.lock` and replays on every subsequent install.
 
-## The lockfile (iii.lock)
+### The lockfile (iii.lock)
 
 `iii.lock` is a YAML file at your project root. It pins each managed worker to a specific version
 and source so the same worker set installs the same way across machines and platforms. Binary
@@ -158,8 +161,8 @@ iii worker sync --frozen   # CI form: verify the lockfile without mutating local
 iii worker verify          # report drift between config.yaml and iii.lock
 ```
 
-`iii worker update` (above) is the third lockfile command; it re-resolves pins to the latest
-permitted versions and writes them back to `iii.lock`.
+[`iii worker update`](#updating-a-worker) is the third lockfile command; it re-resolves pins to the
+latest permitted versions and writes them back to `iii.lock`.
 
 {/* TODO: Add a dedicated lockfile reference page for the per-field schema (top-level fields, LockedWorker, BinaryArtifact, ImageSource, manifest hash format). The dx-improves source includes `docs/workers/managed-worker-lockfile.mdx` which can be ported. */}
 
