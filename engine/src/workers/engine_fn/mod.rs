@@ -1672,6 +1672,21 @@ mod tests {
         let workers = module.list_worker_summaries(None).await;
         assert_eq!(workers[0].connected_at_ms, connected_at_ms);
 
+        let filtered_workers = module
+            .workers_list(WorkersListInput {
+                search: Some("converted-api".to_string()),
+                runtime: Some("engine".to_string()),
+                status: Some("available".to_string()),
+            })
+            .await;
+        match filtered_workers {
+            FunctionResult::Success(result) => {
+                assert_eq!(result.workers.len(), 1);
+                assert_eq!(result.workers[0].id, "converted-api-worker");
+            }
+            _ => panic!("expected generated worker list result"),
+        }
+
         let detail = module
             .build_worker_detail("converted-api-worker")
             .await

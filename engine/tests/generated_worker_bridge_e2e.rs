@@ -267,6 +267,40 @@ async fn generated_bridge_registers_triggerable_function_and_normal_worker_group
         Some(&json!("generated-docs-worker"))
     );
     assert!(metadata.get("iii").is_none());
+
+    engine
+        .router_msg(
+            &worker,
+            &Message::UnregisterFunction {
+                id: "generated_docs::search".to_string(),
+            },
+        )
+        .await
+        .expect("unregister generated function");
+
+    assert!(engine.functions.get("generated_docs::search").is_none());
+
+    let workers = engine
+        .call("engine::workers::list", json!({}))
+        .await
+        .expect("workers list succeeds")
+        .expect("workers list result");
+    assert!(
+        workers_array(&workers)
+            .iter()
+            .all(|worker| worker.get("name").and_then(Value::as_str)
+                != Some("generated-docs-worker"))
+    );
+
+    let worker_info = engine
+        .call(
+            "engine::workers::info",
+            json!({
+                "name": "generated-docs-worker"
+            }),
+        )
+        .await;
+    assert!(worker_info.is_err());
 }
 
 #[tokio::test]
