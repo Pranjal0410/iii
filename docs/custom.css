@@ -175,6 +175,14 @@ pre code {
   color: inherit !important;
 }
 
+pre,
+pre code,
+.code-block [data-line],
+.code-block .line {
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45 !important;
+}
+
 .code-block {
   background: var(--iii-panel) !important;
   border: 1px solid var(--iii-rule) !important;
@@ -183,7 +191,7 @@ pre code {
 
 .code-block [data-component-part="code-block-root"] {
   background: transparent !important;
-  padding: 14px 16px !important;
+  padding: 10px 14px !important;
 }
 
 .code-block [data-component-part="code-block-root"] > pre {
@@ -338,4 +346,42 @@ a:has(> span.bg-primary-dark):hover svg {
 /* Remove the right-side fade gradient Mintlify paints behind floating copy buttons. */
 [data-fade-overlay] {
   display: none !important;
+}
+
+/* Match accordion borders to table borders. Container is transparent so its
+   children control fill: trigger/header always uses inline-code panel bg,
+   expanded content uses the page bg. */
+details,
+[data-component-part="accordion"],
+[data-component-part="accordion-group"] > * {
+  background-color: transparent !important;
+  border: 1px solid var(--iii-rule-2) !important;
+  box-shadow: none !important;
+  color: var(--iii-ink) !important;
+}
+
+details > summary,
+[data-component-part="accordion"] > [data-component-part="accordion-trigger"],
+[data-component-part="accordion"] > button:first-child {
+  background-color: var(--iii-panel) !important;
+  color: var(--iii-ink) !important;
+}
+
+details[open] > summary,
+[data-component-part="accordion"][data-state="open"] > [data-component-part="accordion-trigger"],
+[data-component-part="accordion"][data-state="open"] > button:first-child {
+  border-bottom: 1px solid var(--iii-rule-2) !important;
+}
+
+details > *:not(summary),
+[data-component-part="accordion-content"] {
+  background-color: var(--iii-bg) !important;
+}
+
+[data-component-part="accordion-group"] {
+  border: 0 !important;
+}
+
+[data-component-part="accordion-group"] > * + * {
+  border-top: 0 !important;
 }

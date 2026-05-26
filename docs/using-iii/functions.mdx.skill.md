@@ -5,21 +5,6 @@
 
 {/* TODO: Re-link worker references to https://workers.iii.dev/workers/<name> once the Worker Docs migration ships. */}
 
-## Invoking functions
-
-A function runs when a trigger fires. The same function can be invoked from many trigger types at
-once (direct CLI calls, an HTTP route, and a cron schedule, for example) without changing the
-handler.
-
-<Note>
-  Some trigger types are: [`iii trigger`](/using-iii/cli), [`worker.trigger`](/using-iii/triggers),
-  iii-http,
-  iii-cron,
-  iii-queue,
-  iii-state,
-  iii-stream.
-</Note>
-
 ## Register a function
 
 Inside a worker, `worker.registerFunction(id, handler)` makes a function callable from anywhere in
@@ -31,7 +16,9 @@ and returns the result.
     ```typescript
     import { registerWorker } from "iii-sdk";
 
-    const worker = registerWorker(process.env.III_URL);
+    const url = process.env.III_URL;
+    if (!url) throw new Error("III_URL must be set");
+    const worker = registerWorker(url);
 
     worker.registerFunction("math::add", async (payload: { a: number; b: number }) => {
       return { c: payload.a + payload.b };
@@ -71,26 +58,116 @@ and returns the result.
   </Tab>
 </Tabs>
 
+## Invoking functions
+
+A function runs when a trigger fires. The same function can be invoked from many trigger types at
+once: direct CLI calls (`iii trigger`), in-process SDK calls (`worker.trigger`), or bindings to
+event-source workers like iii-http, iii-cron, iii-queue, iii-state, and iii-stream. All paths leave
+the handler unchanged.
+
+The two most common ways to invoke a function directly are from worker code with `worker.trigger` or
+from the terminal with `iii trigger`:
+
+<Tabs>
+  <Tab title="Node / TypeScript">
+    ```typescript
+    const result = await worker.trigger({
+      function_id: "math::add",
+      payload: { a: 2, b: 3 },
+    });
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    result = worker.trigger({
+        "function_id": "math::add",
+        "payload": {"a": 2, "b": 3},
+    })
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use iii_sdk::TriggerRequest;
+    use serde_json::json;
+
+    let result = worker
+        .trigger(TriggerRequest {
+            function_id: "math::add".into(),
+            payload: json!({ "a": 2, "b": 3 }),
+            action: None,
+            timeout_ms: None,
+        })
+        .await?;
+    ```
+
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    iii trigger math::add a=2 b=3
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Both calls are synchronous by default; they wait for the function to return. For fire-and-forget
+  (`TriggerAction.Void`), queue-routed delivery (`TriggerAction.Enqueue`), per-worker custom
+  actions, condition gating, and binding to event-source triggers, see [Triggers / Call a function
+  directly](/using-iii/triggers#call-a-function-directly).
+</Note>
+
 ## Define request and response formats
 
 Functions can carry JSON Schemas for their request payload and response shape. The schemas are
 stored with the function and feed the iii console and the agent-readable skills.
 
 <Note>
-  Runtime validation is not yet supported. Attached schemas are metadata only; the engine does not
-  reject payloads or responses that don't match. Treat the schemas as contract documentation for
-  callers, agents, and the console until validation lands.
-</Note>
-
-<Note>
   For how to attach schemas when registering a function, see [Creating Workers /
   Functions](/creating-workers/functions#attach-request-and-response-schemas).
 </Note>
 
-## Invoke a function
+## Common functions
 
-<Note>
-  For how to call a registered function from worker code or the terminal (with optional delivery
-  actions like fire-and-forget or queue-routed), see
-  [Triggers / Call a function directly](/using-iii/triggers#call-a-function-directly).
-</Note>
+A handful of functions ship with the iii engine and the standard workers. You'll likely call them
+from almost every iii project. They look like any function you'd register yourself and are invoked
+the same way (via [`iii trigger`](/using-iii/cli) or
+[`worker.trigger`](/using-iii/triggers#call-a-function-directly)). The only thing special about them
+is that you didn't have to register them.
+
+### Engine functions (`engine::*`)
+
+The engine itself registers a small set of introspection and lifecycle functions. Full request and
+response schemas are in the
+[engine protocol reference](/sdk-reference/engine-sdk#engine-discovery-functions).
+
+| Function                      | What it does                                                                                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `engine::functions::list`     | List every registered function. Pass `{ include_internal: true }` to include engine internals.                             |
+| `engine::workers::list`       | List every connected worker with its metrics. Pass `{ worker_id: "<uuid>" }` to look one up.                               |
+| `engine::triggers::list`      | List every registered trigger binding.                                                                                     |
+| `engine::trigger-types::list` | List every advertised trigger type along with its config and call-request schemas.                                         |
+| `engine::channels::create`    | Allocate a streaming channel reader / writer pair. The SDK wraps this as `worker.createChannel()`; rarely called directly. |
+| `engine::workers::register`   | Publish the calling worker's metadata (runtime, version, OS, PID). The SDK calls this automatically on connect.            |
+
+The engine also publishes two subscription triggers in the same family. Bind a function to one of
+these to react to the registry changing:
+
+| Trigger                       | Fires when                                |
+| ----------------------------- | ----------------------------------------- |
+| `engine::functions-available` | A function is registered or unregistered. |
+| `engine::workers-available`   | A worker connects or disconnects.         |
+
+### Common workers
+
+Each of these is published by a separate worker. Function ids, payload shapes, and per-function
+behaviour are in the worker's own docs at [workers.iii.dev](https://workers.iii.dev):
+
+- **State**: KV-style state with scoped namespaces and reactive triggers on create/update/delete.
+  See [iii-state](https://workers.iii.dev/workers/iii-state).
+- **Stream**: Real-time push to connected clients over WebSocket. See
+  [iii-stream](https://workers.iii.dev/workers/iii-stream).
+- **Queue**: Durable, ordered job processing with retries, concurrency limits, and a dead-letter
+  queue. See [iii-queue](https://workers.iii.dev/workers/iii-queue).
+- **Pub/Sub**: Lightweight in-engine topic subscription for fan-out without durability guarantees.
+  See [iii-pubsub](https://workers.iii.dev/workers/iii-pubsub).
+- **Observability**: Traces, logs, metrics, alerts, sampling rules, and rollups. See
+  [iii-observability](https://workers.iii.dev/workers/iii-observability).

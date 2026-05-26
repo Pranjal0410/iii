@@ -253,7 +253,6 @@
                   "using-iii/workers-registry",
                   "using-iii/triggers",
                   "using-iii/functions",
-                  "using-iii/channels",
                   "using-iii/engine",
                   "using-iii/console",
                   "using-iii/cli",
@@ -265,19 +264,18 @@
                 "expanded": false,
                 "pages": [
                   "understanding-iii/index",
-                  "understanding-iii/workers",
-                  "understanding-iii/functions",
-                  "understanding-iii/triggers",
-                  "understanding-iii/channels",
-                  "understanding-iii/engine"
+                  "understanding-iii/engine",
+                  "understanding-iii/channels"
                 ]
               },
               {
                 "group": "Creating Workers",
                 "pages": [
+                  "creating-workers/index",
                   "creating-workers/workers",
+                  "creating-workers/triggers",
                   "creating-workers/functions",
-                  "creating-workers/triggers"
+                  "creating-workers/channels"
                 ]
               }
             ]

@@ -16,7 +16,9 @@ function to return its result, or for the configured timeout to fire. Pass a dif
     ```typescript
     import { registerWorker, TriggerAction } from "iii-sdk";
 
-    const worker = registerWorker(process.env.III_URL);
+    const url = process.env.III_URL;
+    if (!url) throw new Error("III_URL must be set");
+    const worker = registerWorker(url);
 
     const result = await worker.trigger({
       function_id: "math::add",
@@ -43,6 +45,7 @@ function to return its result, or for the configured timeout to fire. Pass a dif
         # "action": TriggerAction.Void(),                    # fire-and-forget
         # "action": TriggerAction.Enqueue(queue="math"),     # route through iii-queue
     })
+    # result = await worker.trigger_async({...})             # awaitable form for asyncio callers
     ```
 
   </Tab>
@@ -81,7 +84,7 @@ Some common actions are:
 - **`TriggerAction.Void()`**. Fire-and-forget. The call returns immediately; the function still runs
   but the caller doesn't see the result.
 - **`TriggerAction.Enqueue({ queue })`**. Provided by
-  iii-queue. Routes the invocation through a named
+  [iii-queue](https://workers.iii.dev/workers/iii-queue). Routes the invocation through a named
   queue with retries; the call returns once the message is enqueued.
 
 <Note>
@@ -89,7 +92,19 @@ Some common actions are:
   documentation](https://workers.iii.dev) for the action types it offers.
 </Note>
 
+<Note>
+  In Python, every blocking method has an awaitable twin (`trigger_async`, `shutdown_async`,
+  `create_channel_async`) for use inside `asyncio`. See the [Python SDK
+  reference](/sdk-reference/python-sdk#trigger--trigger_async).
+</Note>
+
 ## Register a trigger
+
+<Note>
+  If you're authoring a worker, you'll want to refer to [Creating Workers /
+  Triggers](/creating-workers/triggers#bind-a-function-to-an-existing-trigger-type) to learn the
+  difference between registering a trigger, and registering a trigger type.
+</Note>
 
 Functions can also run when a trigger is satisfied. A trigger can be any event that happens such as
 a request to an `http` endpoint, a `cron` job, a change in `state`, or any other trigger that a
@@ -103,7 +118,9 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
     ```typescript
     import { registerWorker } from "iii-sdk";
 
-    const worker = registerWorker(process.env.III_URL);
+    const url = process.env.III_URL;
+    if (!url) throw new Error("III_URL must be set");
+    const worker = registerWorker(url);
 
     worker.registerTrigger({
       type: "http",
@@ -111,6 +128,7 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
       config: { api_path: "/math/add", http_method: "POST" },
     });
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -128,6 +146,7 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
         "config": {"api_path": "/math/add", "http_method": "POST"},
     })
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
@@ -149,7 +168,17 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
 </Tabs>
 
 Per-type configuration is documented in each worker's Worker Docs (e.g.
-iii-http for the `http` type).
+[iii-http](https://workers.iii.dev/workers/iii-http) for the `http` type).
+
+## Handling missing triggers
+
+When the engine cannot register a trigger, most commonly because the trigger type's worker is not
+active in the project, it sends a `TriggerRegistrationResult` with an `error` body back to the
+worker that initiated the request and logs it.
+
+For known trigger types (ex. `http`, `subscribe`, `state`, `durable:subscriber`, `stream`), the
+error message will include the install command for the missing worker. If it doesn't you can find
+the worker that exposes the needed type at [workers.iii.dev](https://workers.iii.dev)
 
 ## Bind multiple triggers to one function
 
@@ -158,13 +187,185 @@ number of types. Register a second trigger with the same `function_id` and a dif
 config; the function runs unchanged whether the call arrives over HTTP, on a cron schedule, or from
 a queue message.
 
+<Tabs>
+  <Tab title="Node / TypeScript">
+    ```typescript
+    // Same handler runs for an HTTP POST and a weekly cron tick.
+    worker.registerTrigger({
+      type: "http",
+      function_id: "reports::generate",
+      config: { api_path: "/reports/generate", http_method: "POST" },
+    });
+
+    worker.registerTrigger({
+      type: "cron",
+      function_id: "reports::generate",
+      config: { expression: "0 0 9 * * 1" }, // Every Monday at 09:00
+    });
+    ```
+
+  </Tab>
+  <Tab title="Python">
+    ```python
+    worker.register_trigger({
+        "type": "http",
+        "function_id": "reports::generate",
+        "config": {"api_path": "/reports/generate", "http_method": "POST"},
+    })
+
+    worker.register_trigger({
+        "type": "cron",
+        "function_id": "reports::generate",
+        "config": {"expression": "0 0 9 * * 1"},  # Every Monday at 09:00
+    })
+    ```
+
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use iii_sdk::RegisterTriggerInput;
+    use serde_json::json;
+
+    worker.register_trigger(RegisterTriggerInput {
+        trigger_type: "http".into(),
+        function_id: "reports::generate".into(),
+        config: json!({ "api_path": "/reports/generate", "http_method": "POST" }),
+        metadata: None,
+    })?;
+
+    worker.register_trigger(RegisterTriggerInput {
+        trigger_type: "cron".into(),
+        function_id: "reports::generate".into(),
+        config: json!({ "expression": "0 0 9 * * 1" }), // Every Monday at 09:00
+        metadata: None,
+    })?;
+    ```
+
+  </Tab>
+</Tabs>
+
 ## Gate a trigger with a condition
 
-A trigger can carry an optional `condition_function_id`. When the trigger fires, the engine invokes
-the condition function first; the target `function_id` only runs if the condition returns truthy.
-Use this when the same event source should sometimes fire the function and sometimes skip it.
+A trigger can carry an optional `condition_function_id` (set inside the trigger's `config`). When
+the trigger fires, the engine invokes the condition function first with the same payload the handler
+would receive; the target `function_id` only runs when the condition returns truthy. The condition
+is a regular registered function.
+
+<Tabs>
+  <Tab title="Node / TypeScript">
+    ```typescript
+    worker.registerFunction(
+      "orders::is-priority",
+      async (payload: { customer_tier: string }) => payload.customer_tier === "gold",
+    );
+
+    worker.registerTrigger({
+      type: "http",
+      function_id: "orders::expedite",
+      config: {
+        api_path: "/orders/expedite",
+        http_method: "POST",
+        condition_function_id: "orders::is-priority",
+      },
+    });
+    ```
+
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def is_priority(payload: dict) -> bool:
+        return payload.get("customer_tier") == "gold"
+
+    worker.register_function("orders::is-priority", is_priority)
+
+    worker.register_trigger({
+        "type": "http",
+        "function_id": "orders::expedite",
+        "config": {
+            "api_path": "/orders/expedite",
+            "http_method": "POST",
+            "condition_function_id": "orders::is-priority",
+        },
+    })
+    ```
+
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use iii_sdk::{RegisterFunction, RegisterTriggerInput};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use serde_json::json;
+
+    #[derive(Deserialize, JsonSchema)]
+    struct Payload { customer_tier: String }
+
+    worker.register_function(RegisterFunction::new(
+        "orders::is-priority",
+        |input: Payload| -> Result<bool, String> {
+            Ok(input.customer_tier == "gold")
+        },
+    ));
+
+    worker.register_trigger(RegisterTriggerInput {
+        trigger_type: "http".into(),
+        function_id: "orders::expedite".into(),
+        config: json!({
+            "api_path": "/orders/expedite",
+            "http_method": "POST",
+            "condition_function_id": "orders::is-priority",
+        }),
+        metadata: None,
+    })?;
+    ```
+
+  </Tab>
+</Tabs>
 
 ## Unregister a trigger
 
-Trigger registration returns a handle. Pass that handle to `worker.unregisterTrigger(...)` to drop
-the trigger at runtime. When the worker disconnects, all of its triggers are removed automatically.
+Trigger registration returns a handle with an `unregister()` method. Call it to drop the trigger at
+runtime; when the worker disconnects, all of its triggers are removed automatically.
+
+<Tabs>
+  <Tab title="Node / TypeScript">
+    ```typescript
+    const trigger = worker.registerTrigger({
+      type: "http",
+      function_id: "math::add",
+      config: { api_path: "/math/add", http_method: "POST" },
+    });
+
+    trigger.unregister();
+    ```
+
+  </Tab>
+  <Tab title="Python">
+    ```python
+    trigger = worker.register_trigger({
+        "type": "http",
+        "function_id": "math::add",
+        "config": {"api_path": "/math/add", "http_method": "POST"},
+    })
+
+    trigger.unregister()
+    ```
+
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use iii_sdk::RegisterTriggerInput;
+    use serde_json::json;
+
+    let trigger = worker.register_trigger(RegisterTriggerInput {
+        trigger_type: "http".into(),
+        function_id: "math::add".into(),
+        config: json!({ "api_path": "/math/add", "http_method": "POST" }),
+        metadata: None,
+    })?;
+
+    trigger.unregister();
+    ```
+
+  </Tab>
+</Tabs>
