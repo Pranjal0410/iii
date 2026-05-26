@@ -170,6 +170,16 @@ You bind triggers to functions via the `function_id`. The trigger declares its `
 Per-type configuration is documented in each worker's Worker Docs (e.g.
 [iii-http](https://workers.iii.dev/workers/iii-http) for the `http` type).
 
+## Handling missing triggers
+
+When the engine cannot register a trigger, most commonly because the trigger type's worker is not
+active in the project, it sends a `TriggerRegistrationResult` with an `error` body back to the
+worker that initiated the request and logs it.
+
+For known trigger types (ex. `http`, `subscribe`, `state`, `durable:subscriber`, `stream`), the
+error message will include the install command for the missing worker. If it doesn't you can find
+the worker that exposes the needed type at [workers.iii.dev](https://workers.iii.dev)
+
 ## Bind multiple triggers to one function
 
 It's valid to bind multiple triggers to the same `function_id` and this can be done across any
@@ -193,6 +203,7 @@ a queue message.
       config: { expression: "0 0 9 * * 1" }, // Every Monday at 09:00
     });
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -208,6 +219,7 @@ a queue message.
         "config": {"expression": "0 0 9 * * 1"},  # Every Monday at 09:00
     })
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
@@ -228,15 +240,16 @@ a queue message.
         metadata: None,
     })?;
     ```
+
   </Tab>
 </Tabs>
 
 ## Gate a trigger with a condition
 
 A trigger can carry an optional `condition_function_id` (set inside the trigger's `config`). When
-the trigger fires, the engine invokes the condition function first with the same payload the
-handler would receive; the target `function_id` only runs when the condition returns truthy. The
-condition is a regular registered function.
+the trigger fires, the engine invokes the condition function first with the same payload the handler
+would receive; the target `function_id` only runs when the condition returns truthy. The condition
+is a regular registered function.
 
 <Tabs>
   <Tab title="Node / TypeScript">
@@ -256,6 +269,7 @@ condition is a regular registered function.
       },
     });
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -274,6 +288,7 @@ condition is a regular registered function.
         },
     })
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
@@ -303,13 +318,14 @@ condition is a regular registered function.
         metadata: None,
     })?;
     ```
+
   </Tab>
 </Tabs>
 
 ## Unregister a trigger
 
-Trigger registration returns a handle with an `unregister()` method. Call it to drop the trigger
-at runtime; when the worker disconnects, all of its triggers are removed automatically.
+Trigger registration returns a handle with an `unregister()` method. Call it to drop the trigger at
+runtime; when the worker disconnects, all of its triggers are removed automatically.
 
 <Tabs>
   <Tab title="Node / TypeScript">
@@ -322,6 +338,7 @@ at runtime; when the worker disconnects, all of its triggers are removed automat
 
     trigger.unregister();
     ```
+
   </Tab>
   <Tab title="Python">
     ```python
@@ -333,6 +350,7 @@ at runtime; when the worker disconnects, all of its triggers are removed automat
 
     trigger.unregister()
     ```
+
   </Tab>
   <Tab title="Rust">
     ```rust
@@ -348,5 +366,6 @@ at runtime; when the worker disconnects, all of its triggers are removed automat
 
     trigger.unregister();
     ```
+
   </Tab>
 </Tabs>

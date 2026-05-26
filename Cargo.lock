@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "iii"
-version = "0.13.0-next.1"
+version = "0.14.0-next.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2637,6 +2637,7 @@ dependencies = [
  "http-body-util",
  "iana-time-zone",
  "iii-sdk",
+ "iii-worker",
  "indexmap 2.14.0",
  "indicatif 0.17.11",
  "inventory",
@@ -2690,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "iii-console"
-version = "0.13.0-next.1"
+version = "0.14.0-next.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2767,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "iii-sdk"
-version = "0.13.0-next.1"
+version = "0.14.0-next.2"
 dependencies = [
  "async-trait",
  "ctor",
@@ -2788,6 +2789,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tracing",
+ "tracing-test",
  "uuid",
 ]
 
@@ -2832,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "iii-worker"
-version = "0.13.0-next.1"
+version = "0.14.0-next.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3545,7 +3547,7 @@ dependencies = [
 
 [[package]]
 name = "motia-tools"
-version = "0.13.0-next.1"
+version = "0.14.0-next.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -5255,7 +5257,7 @@ dependencies = [
 
 [[package]]
 name = "scaffolder-core"
-version = "0.13.0-next.1"
+version = "0.14.0-next.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -6484,6 +6486,27 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "tracing-test"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19a4c448db514d4f24c5ddb9f73f2ee71bfb24c526cf0c570ba142d1119e0051"
+dependencies = [
+ "tracing-core",
+ "tracing-subscriber",
+ "tracing-test-macro",
+]
+
+[[package]]
+name = "tracing-test-macro"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad06847b7afb65c7866a36664b75c40b895e318cea4f71299f013fb22965329d"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
