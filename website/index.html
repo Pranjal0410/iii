@@ -6710,7 +6710,7 @@ iii.register_function(
     const meta = document.querySelector('meta[name="iii:mailmodo-form-url"]');
     return meta && meta.getAttribute('content') ? meta.getAttribute('content').trim() : '';
   }
-  async function submitToMailmodo(email){
+  async function submitToMailmodo(email, formLocation){
     const url = getMailmodoFormUrl();
     if (!url) return;
     try {
@@ -6722,6 +6722,7 @@ iii.register_function(
       // Mailmodo returns 409 for already-subscribed; treat as success.
       if (!res.ok && res.status !== 409) throw new Error('mailmodo submission failed');
       if (typeof window.iiiNotifyCommonRoomEmail === 'function') window.iiiNotifyCommonRoomEmail(email);
+      if (typeof window.iiiNotifyPostHogEmailSubmit === 'function') window.iiiNotifyPostHogEmailSubmit(formLocation);
     } catch (_) {
       // Swallow — we still mark the form submitted so users aren't blocked.
     }
@@ -6750,7 +6751,7 @@ iii.register_function(
       persistAccessRequest(v);
       emailForm.classList.add('submitted');
       emailInput.value = '';
-      submitToMailmodo(v);
+      submitToMailmodo(v, 'hero');
     });
   }
 
@@ -7104,7 +7105,7 @@ iii.register_function(
       persistAccessRequest(v);
       form.classList.add('submitted');
       input.value = '';
-      submitToMailmodo(v);
+      submitToMailmodo(v, 'footer');
     });
   })();
 

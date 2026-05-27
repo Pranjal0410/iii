@@ -61,6 +61,26 @@
     });
   };
 
+  // Records a successful email-form submission in PostHog. Mirrors the timing of
+  // iiiNotifyCommonRoomEmail, but intentionally omits the email address — we only
+  // need to know that a submission happened, not who it was. Where available, we
+  // attach the Common Room visitor id (its signals-sdk-user-id cookie) so the two
+  // systems can be joined per visitor.
+  window.iiiNotifyPostHogEmailSubmit = function (formLocation) {
+    try {
+      if (localStorage.getItem(STORAGE_KEY) !== 'accepted') return;
+      if (!window.posthog || typeof window.posthog.capture !== 'function') return;
+      var props = { form_location: formLocation || 'unknown' };
+      var match = document.cookie.match(/(?:^|;\s*)signals-sdk-user-id=([^;]+)/);
+      if (match) {
+        var crId = decodeURIComponent(match[1]);
+        props.common_room_user_id = crId;
+        props.$set = { common_room_user_id: crId };
+      }
+      window.posthog.capture('website_email_submit', props);
+    } catch (_) {}
+  };
+
   try {
     if (localStorage.getItem(STORAGE_KEY) === 'accepted') window.iiiLoadPostHog();
   } catch (_) {}
