@@ -61,26 +61,22 @@
     });
   };
 
-  // Records a successful email-form submission in PostHog. Mirrors the timing of
-  // iiiNotifyCommonRoomEmail.
-  //
-  // We identify() the person by their email (the cross-system key Common Room
-  // also de-anonymizes on), which creates the PostHog person profile under
-  // person_profiles: 'identified_only'. Where the Common Room visitor id (its
-  // signals-sdk-user-id cookie) is present we attach it too, so the two systems
-  // can be joined per visitor. That cookie is written asynchronously by Common
-  // Room's signals.js, so if it's not there yet we wait briefly and retry once
-  // before recording without it — the submission is always recorded either way.
-  var CR_COOKIE_RETRY_MS = 2000;
-
+  // Records a successful email-form submission in PostHog. We identify() the
+  // person by their email (the cross-system key Common Room also de-anonymizes
+  // on), which creates the PostHog person profile under
+  // person_profiles: 'identified_only'. Where Common Room's signals-sdk-user-id
+  // cookie is already present we attach its visitor id too, so the two systems
+  // can be joined per visitor; if it isn't set yet we just record without it.
   function iiiReadCommonRoomId() {
     var match = document.cookie.match(/(?:^|;\s*)signals-sdk-user-id=([^;]+)/);
     return match ? decodeURIComponent(match[1]) : null;
   }
 
-  function iiiSendPostHogEmailSubmit(email, formLocation, crId) {
+  window.iiiNotifyPostHogEmailSubmit = function (email, formLocation) {
     try {
+      if (localStorage.getItem(STORAGE_KEY) !== 'accepted') return;
       if (!window.posthog || typeof window.posthog.capture !== 'function') return;
+      var crId = iiiReadCommonRoomId();
       var distinctId = email || crId;
       if (distinctId) {
         var personProps = {};
@@ -92,22 +88,6 @@
       if (email) props.email = email;
       if (crId) props.common_room_user_id = crId;
       window.posthog.capture('website_email_submit', props);
-    } catch (_) {}
-  }
-
-  window.iiiNotifyPostHogEmailSubmit = function (email, formLocation) {
-    try {
-      if (localStorage.getItem(STORAGE_KEY) !== 'accepted') return;
-      if (!window.posthog || typeof window.posthog.capture !== 'function') return;
-      var crId = iiiReadCommonRoomId();
-      if (crId) {
-        iiiSendPostHogEmailSubmit(email, formLocation, crId);
-      } else {
-        // Common Room may not have written its cookie yet; give it one retry.
-        setTimeout(function () {
-          iiiSendPostHogEmailSubmit(email, formLocation, iiiReadCommonRoomId());
-        }, CR_COOKIE_RETRY_MS);
-      }
     } catch (_) {}
   };
 
