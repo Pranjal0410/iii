@@ -34,7 +34,9 @@ A channel has two local stream objects and two serializable refs:
 <Tabs>
   <Tab title="Node / TypeScript">
     ```typescript
-    const channel = await iii.createChannel();
+    import { createChannel } from "iii-sdk/helpers";
+
+    const channel = await createChannel(iii);
 
     // channel.writer
     // channel.reader
@@ -44,7 +46,9 @@ A channel has two local stream objects and two serializable refs:
   </Tab>
   <Tab title="Python">
     ```python
-    channel = iii_client.create_channel()
+    from iii.helpers import create_channel
+
+    channel = create_channel(iii_client)
 
     # channel.writer
     # channel.reader
@@ -54,7 +58,9 @@ A channel has two local stream objects and two serializable refs:
   </Tab>
   <Tab title="Rust">
     ```rust
-    let channel = iii.create_channel(None).await?;
+    use iii_sdk::helpers::create_channel;
+
+    let channel = create_channel(&iii, None).await?;
 
     // channel.writer
     // channel.reader
@@ -71,14 +77,18 @@ Write the stream payload to the local writer and close it when you are done.
 <Tabs>
   <Tab title="Node / TypeScript">
     ```typescript
-    const channel = await iii.createChannel();
+    import { createChannel } from "iii-sdk/helpers";
+
+    const channel = await createChannel(iii);
 
     channel.writer.stream.end(Buffer.from("file contents"));
     ```
   </Tab>
   <Tab title="Python">
     ```python
-    channel = await iii_client.create_channel_async()
+    from iii.helpers import create_channel_async
+
+    channel = await create_channel_async(iii_client)
 
     await channel.writer.write(b"file contents")
     await channel.writer.close_async()
@@ -86,7 +96,9 @@ Write the stream payload to the local writer and close it when you are done.
   </Tab>
   <Tab title="Rust">
     ```rust
-    let channel = iii.create_channel(None).await?;
+    use iii_sdk::helpers::create_channel;
+
+    let channel = create_channel(&iii, None).await?;
 
     channel.writer.write(b"file contents").await?;
     channel.writer.close().await?;
@@ -179,10 +191,11 @@ receives the ref in JSON and reconstructs the reader with `ChannelReader::new(..
   </Tab>
   <Tab title="Rust">
     ```rust
-    use iii_sdk::{ChannelDirection, ChannelReader, IIIError};
+    use iii_sdk::helpers::{ChannelDirection, extract_channel_refs};
+    use iii_sdk::{ChannelReader, IIIError};
     use serde_json::json;
 
-    let refs = iii_sdk::extract_channel_refs(&input);
+    let refs = extract_channel_refs(&input);
     let reader_ref = refs
         .iter()
         .find(|(key, ref_)| key == "reader" && matches!(ref_.direction, ChannelDirection::Read))
