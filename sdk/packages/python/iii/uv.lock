@@ -546,33 +546,22 @@ wheels = [
 
 [[package]]
 name = "iii-observability"
-version = "0.16.0.dev3"
-source = { editable = "../observability" }
+version = "0.18.0.dev1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "websockets" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
-    { name = "opentelemetry-api", specifier = ">=1.25" },
-    { name = "opentelemetry-sdk", specifier = ">=1.25" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.30" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.2" },
-    { name = "websockets", specifier = ">=12.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/f3/35/1360ef7f788536e40c5f2ee826389f20a9fe966dbec7598278ef8358012d/iii_observability-0.18.0.dev1.tar.gz", hash = "sha256:912bfade4592a64fcbcef58a525b1cf577308a807cf0c8dd62d59fe36c44aeab", size = 61799, upload-time = "2026-06-01T20:42:45.53Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/72/bf5ae59ffaac269ecb686665371599ff7dc94f04621a27bf793c0b9e1c0a/iii_observability-0.18.0.dev1-py3-none-any.whl", hash = "sha256:ae5e801d9be62edc174fd4ba47f218774072f86f776551d76e3e72762bb73211", size = 19780, upload-time = "2026-06-01T20:42:44.531Z" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "iii-sdk"
-version = "0.16.0.dev3"
+version = "0.18.0.dev1"
 source = { editable = "." }
 dependencies = [
     { name = "iii-observability" },
@@ -598,7 +587,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9" },
     { name = "anyio", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "griffe", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "iii-observability", editable = "../observability" },
+    { name = "iii-observability", specifier = "==0.18.0.dev1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
     { name = "opentelemetry-api", specifier = ">=1.25" },
     { name = "pydantic", specifier = ">=2.0" },
