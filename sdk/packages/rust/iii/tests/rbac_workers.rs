@@ -11,8 +11,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use serial_test::serial;
 
+use iii_sdk::types::IIIConnectionState;
 use iii_sdk::{
-    AuthInput, AuthResult, IIIConnectionState, InitOptions, MiddlewareFunctionInput,
+    AuthInput, AuthResult, InitOptions, MiddlewareFunctionInput,
     OnFunctionRegistrationInput, OnFunctionRegistrationResult, OnTriggerRegistrationInput,
     OnTriggerRegistrationResult, OnTriggerTypeRegistrationInput, OnTriggerTypeRegistrationResult,
     RegisterFunction, TriggerRequest, register_worker,

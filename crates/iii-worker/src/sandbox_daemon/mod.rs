@@ -104,7 +104,8 @@ If detail.fix is non-null, your next call is fn(detail.fix).
 use std::sync::Arc;
 
 use iii_observability::OtelConfig;
-use iii_sdk::{InitOptions, RegisterFunction, WorkerMetadata, register_worker};
+use iii_sdk::types::WorkerMetadata;
+use iii_sdk::{InitOptions, RegisterFunction, register_worker};
 
 use crate::sandbox_daemon::config::SandboxConfig;
 use crate::sandbox_daemon::errors::SandboxErrorWire;

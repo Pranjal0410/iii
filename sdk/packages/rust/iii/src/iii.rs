@@ -864,7 +864,8 @@ impl III {
     ///
     /// HTTP-invoked function:
     /// ```rust,no_run
-    /// # use iii_sdk::{register_worker, InitOptions, RegisterFunction, HttpInvocationConfig, HttpMethod};
+    /// # use iii_sdk::{register_worker, InitOptions, RegisterFunction, HttpInvocationConfig};
+    /// # use iii_sdk::types::HttpMethod;
     /// # use std::collections::HashMap;
     /// # let iii = register_worker("ws://localhost:49134", InitOptions::default());
     /// let config = HttpInvocationConfig {

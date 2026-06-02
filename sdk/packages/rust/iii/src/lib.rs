@@ -17,14 +17,18 @@ pub use builtin_triggers::{
 pub use channels::{ChannelReader, ChannelWriter, StreamChannelRef};
 pub use error::IIIError;
 pub use iii::{
-    FunctionInfo, FunctionRef, III, IIIConnectionState, RegisterFunction, RegisterTriggerType,
-    TriggerInfo, TriggerTypeInfo, TriggerTypeRef, WorkerInfo, WorkerMetadata,
+    FunctionRef, III, RegisterFunction, RegisterTriggerType, TriggerTypeInfo, TriggerTypeRef,
 };
 pub use protocol::{
-    EnqueueResult, ErrorBody, FunctionMessage, HttpAuthConfig, HttpInvocationConfig, HttpMethod,
-    Message, RegisterFunctionMessage, RegisterTriggerInput, RegisterTriggerMessage,
+    EnqueueResult, ErrorBody, FunctionMessage, HttpAuthConfig, HttpInvocationConfig, Message,
+    RegisterFunctionMessage, RegisterTriggerInput, RegisterTriggerMessage,
     RegisterTriggerTypeMessage, TriggerAction, TriggerRequest,
 };
+
+// `FunctionInfo`, `TriggerInfo`, `WorkerInfo`, `WorkerMetadata`, `IIIConnectionState`, and
+// `HttpMethod` moved to the `types` submodule in 0.18.0 (see compile-fail doctests below).
+// `WorkerMetadata` is still referenced internally by `InitOptions`.
+use crate::iii::WorkerMetadata;
 pub use stream::UpdateBuilder;
 pub use stream_provider::IStream;
 pub use structs::{
@@ -148,3 +152,53 @@ fn _ensure_is_channel_ref_not_top_level() {}
 /// ```
 #[allow(dead_code)]
 fn _ensure_create_channel_not_on_instance() {}
+
+// ---------------------------------------------------------------------------
+// Compile-fail doctests: enforce that the type/data symbols relocated to the
+// `types` submodule in 0.18.0 are NOT reachable at the crate root.
+// ---------------------------------------------------------------------------
+
+/// ```compile_fail
+/// use iii_sdk::HttpMethod;
+/// ```
+#[allow(dead_code)]
+fn _ensure_http_method_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::IIIConnectionState;
+/// ```
+#[allow(dead_code)]
+fn _ensure_connection_state_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::FunctionInfo;
+/// ```
+#[allow(dead_code)]
+fn _ensure_function_info_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::TriggerInfo;
+/// ```
+#[allow(dead_code)]
+fn _ensure_trigger_info_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::WorkerInfo;
+/// ```
+#[allow(dead_code)]
+fn _ensure_worker_info_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::WorkerMetadata;
+/// ```
+#[allow(dead_code)]
+fn _ensure_worker_metadata_not_top_level() {}
+
+/// Positive: all six are reachable via the `types` submodule.
+/// ```rust
+/// use iii_sdk::types::{
+///     FunctionInfo, HttpMethod, IIIConnectionState, TriggerInfo, WorkerInfo, WorkerMetadata,
+/// };
+/// ```
+#[allow(dead_code)]
+fn _ensure_relocated_types_reachable_via_types() {}

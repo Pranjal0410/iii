@@ -15,6 +15,11 @@ use crate::{
 pub type RemoteFunctionHandler =
     Arc<dyn Fn(Value) -> BoxFuture<'static, Result<Value, IIIError>> + Send + Sync>;
 
+// Symbols relocated out of the crate root into the `types` submodule in 0.18.0.
+// Their definitions stay in their original modules; `types` is the public access path.
+pub use crate::iii::{FunctionInfo, IIIConnectionState, TriggerInfo, WorkerInfo, WorkerMetadata};
+pub use crate::protocol::HttpMethod;
+
 // ============================================================================
 // Stream Update Types
 // ============================================================================
