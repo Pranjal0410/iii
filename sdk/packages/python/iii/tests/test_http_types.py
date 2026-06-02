@@ -1,3 +1,5 @@
+import asyncio
+
 from iii import HttpRequest, HttpResponse, StreamingRequest
 
 
@@ -17,9 +19,6 @@ def test_streaming_request_has_reader_field():
     fields = {f.name for f in dataclasses.fields(StreamingRequest)}
     assert "request_body" in fields
     assert "body" not in fields
-
-
-import asyncio
 
 
 class _FakeWriter:
