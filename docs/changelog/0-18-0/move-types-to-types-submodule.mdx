@@ -15,6 +15,9 @@ in the SDK's `types` submodule. The root keeps exporting the runtime API (`regis
 | `FunctionInfo`, `TriggerInfo`, `WorkerInfo`, `WorkerMetadata` | Rust |
 | `IIIConnectionState` | Rust (moved); Python, Node (newly reachable from `types`) |
 | `MessageType` | Python, Node |
+| `ApiRequest`, `ApiResponse` | Rust, Python, Node |
+| `AuthInput`, `AuthResult` | Rust, Python, Node |
+| `HttpRequest`, `HttpResponse` | Python, Node (no Rust equivalent) |
 
 ## Migrate
 
@@ -23,23 +26,25 @@ in the SDK's `types` submodule. The root keeps exporting the runtime API (`regis
 ```rust
 // Before
 use iii_sdk::{HttpMethod, FunctionInfo, WorkerInfo, WorkerMetadata, IIIConnectionState};
+use iii_sdk::{ApiRequest, ApiResponse, AuthInput, AuthResult};
 
 // After
 use iii_sdk::types::{HttpMethod, FunctionInfo, WorkerInfo, WorkerMetadata, IIIConnectionState};
+use iii_sdk::types::{ApiRequest, ApiResponse, AuthInput, AuthResult};
 ```
 
-`TriggerInfo` moves the same way (`iii_sdk::types::TriggerInfo`). Symbols that stayed at the crate
-root — `register_worker`, `III`, `InitOptions`, `RegisterFunction`, `TriggerAction`, and the
-others — are unaffected.
+`TriggerInfo` moves the same way (`iii_sdk::types::TriggerInfo`). The Rust SDK has no `HttpRequest`
+/ `HttpResponse` types. Symbols that stayed at the crate root — `register_worker`, `III`,
+`InitOptions`, `RegisterFunction`, `TriggerAction`, and the others — are unaffected.
 
 ### Python
 
 ```python
 # Before
-from iii import MessageType
+from iii import MessageType, ApiRequest, ApiResponse, HttpRequest, HttpResponse, AuthInput, AuthResult
 
 # After
-from iii.types import MessageType
+from iii.types import MessageType, ApiRequest, ApiResponse, HttpRequest, HttpResponse, AuthInput, AuthResult
 ```
 
 `IIIConnectionState` is now re-exported from the same submodule:
@@ -50,14 +55,24 @@ from iii.types import IIIConnectionState
 
 ### Node
 
-`MessageType` and `IIIConnectionState` are type-only exports on the new `iii-sdk/types` subpath:
+The relocated symbols are type-only exports on the new `iii-sdk/types` subpath:
 
 ```ts
 // Before
 import { MessageType } from 'iii-sdk'
+import type { ApiRequest, ApiResponse, HttpRequest, HttpResponse, AuthInput, AuthResult } from 'iii-sdk'
 
 // After
-import type { MessageType, IIIConnectionState } from 'iii-sdk/types'
+import type {
+  MessageType,
+  IIIConnectionState,
+  ApiRequest,
+  ApiResponse,
+  HttpRequest,
+  HttpResponse,
+  AuthInput,
+  AuthResult,
+} from 'iii-sdk/types'
 ```
 
 ## Why

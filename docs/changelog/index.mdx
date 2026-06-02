@@ -16,11 +16,16 @@ type: "reference"
   | `HttpMethod` | Rust | `use iii_sdk::HttpMethod;` | `use iii_sdk::types::HttpMethod;` |
   | `FunctionInfo`, `TriggerInfo`, `WorkerInfo`, `WorkerMetadata` | Rust | `use iii_sdk::WorkerInfo;` | `use iii_sdk::types::WorkerInfo;` |
   | `IIIConnectionState` | Rust | `use iii_sdk::IIIConnectionState;` | `use iii_sdk::types::IIIConnectionState;` |
+  | `ApiRequest`, `ApiResponse` | Rust | `use iii_sdk::ApiRequest;` | `use iii_sdk::types::ApiRequest;` |
+  | `AuthInput`, `AuthResult` | Rust | `use iii_sdk::AuthInput;` | `use iii_sdk::types::AuthInput;` |
   | `MessageType` | Python | `from iii import MessageType` | `from iii.types import MessageType` |
+  | `ApiRequest`, `ApiResponse`, `HttpRequest`, `HttpResponse`, `AuthInput`, `AuthResult` | Python | `from iii import ApiRequest` | `from iii.types import ApiRequest` |
   | `MessageType` | Node | `import { MessageType } from 'iii-sdk'` | `import type { MessageType } from 'iii-sdk/types'` |
+  | `ApiRequest`, `ApiResponse`, `HttpRequest`, `HttpResponse`, `AuthInput`, `AuthResult` | Node | `import type { ApiRequest } from 'iii-sdk'` | `import type { ApiRequest } from 'iii-sdk/types'` |
 
   In Python and Node, `IIIConnectionState` is now also reachable from the same `types` submodule
   (`from iii.types import IIIConnectionState` / `import type { IIIConnectionState } from 'iii-sdk/types'`).
+  `HttpRequest` / `HttpResponse` move in Python and Node only (the Rust SDK has no such types).
   The root continues to export the runtime API — `register_worker` / `registerWorker`, the client
   handle, triggers, channels, and errors — unchanged.
 
