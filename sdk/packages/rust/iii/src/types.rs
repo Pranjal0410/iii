@@ -17,8 +17,10 @@ pub type RemoteFunctionHandler =
 
 // Symbols relocated out of the crate root into the `types` submodule in 0.18.0.
 // Their definitions stay in their original modules; `types` is the public access path.
+// (`ApiRequest` / `ApiResponse` are defined in this module directly.)
 pub use crate::iii::{FunctionInfo, IIIConnectionState, TriggerInfo, WorkerInfo, WorkerMetadata};
 pub use crate::protocol::HttpMethod;
+pub use crate::structs::{AuthInput, AuthResult};
 
 // ============================================================================
 // Stream Update Types

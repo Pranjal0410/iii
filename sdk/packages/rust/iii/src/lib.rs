@@ -32,16 +32,15 @@ use crate::iii::WorkerMetadata;
 pub use stream::UpdateBuilder;
 pub use stream_provider::IStream;
 pub use structs::{
-    AuthInput, AuthResult, MiddlewareFunctionInput, OnFunctionRegistrationInput,
-    OnFunctionRegistrationResult, OnTriggerRegistrationInput, OnTriggerRegistrationResult,
-    OnTriggerTypeRegistrationInput, OnTriggerTypeRegistrationResult,
+    MiddlewareFunctionInput, OnFunctionRegistrationInput, OnFunctionRegistrationResult,
+    OnTriggerRegistrationInput, OnTriggerRegistrationResult, OnTriggerTypeRegistrationInput,
+    OnTriggerTypeRegistrationResult,
 };
 pub use triggers::{Trigger, TriggerConfig, TriggerHandler};
 pub use types::{
-    ApiRequest, ApiResponse, Channel, DeleteResult, FieldPath, MergePath, SetResult,
-    StreamAuthInput, StreamAuthResult, StreamDeleteInput, StreamGetInput, StreamJoinResult,
-    StreamListGroupsInput, StreamListInput, StreamSetInput, StreamUpdateInput, UpdateOp,
-    UpdateOpError, UpdateResult,
+    Channel, DeleteResult, FieldPath, MergePath, SetResult, StreamAuthInput, StreamAuthResult,
+    StreamDeleteInput, StreamGetInput, StreamJoinResult, StreamListGroupsInput, StreamListInput,
+    StreamSetInput, StreamUpdateInput, UpdateOp, UpdateOpError, UpdateResult,
 };
 
 pub use serde_json::Value;
@@ -194,10 +193,35 @@ fn _ensure_worker_info_not_top_level() {}
 #[allow(dead_code)]
 fn _ensure_worker_metadata_not_top_level() {}
 
-/// Positive: all six are reachable via the `types` submodule.
+/// ```compile_fail
+/// use iii_sdk::ApiRequest;
+/// ```
+#[allow(dead_code)]
+fn _ensure_api_request_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::ApiResponse;
+/// ```
+#[allow(dead_code)]
+fn _ensure_api_response_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::AuthInput;
+/// ```
+#[allow(dead_code)]
+fn _ensure_auth_input_not_top_level() {}
+
+/// ```compile_fail
+/// use iii_sdk::AuthResult;
+/// ```
+#[allow(dead_code)]
+fn _ensure_auth_result_not_top_level() {}
+
+/// Positive: every relocated symbol is reachable via the `types` submodule.
 /// ```rust
 /// use iii_sdk::types::{
-///     FunctionInfo, HttpMethod, IIIConnectionState, TriggerInfo, WorkerInfo, WorkerMetadata,
+///     ApiRequest, ApiResponse, AuthInput, AuthResult, FunctionInfo, HttpMethod,
+///     IIIConnectionState, TriggerInfo, WorkerInfo, WorkerMetadata,
 /// };
 /// ```
 #[allow(dead_code)]
