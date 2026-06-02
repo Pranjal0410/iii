@@ -31,6 +31,11 @@ from .iii_types import (
 )
 from .triggers import Trigger, TriggerHandler
 
+# Relocated from the package root into ``iii.types`` in 0.18.0. Re-exported here
+# (``X as X`` marks the intentional public re-export for type checkers/linters).
+from .iii_constants import IIIConnectionState as IIIConnectionState  # noqa: E402 isort: skip
+from .iii_types import MessageType as MessageType  # noqa: E402 isort: skip
+
 if TYPE_CHECKING:
     from .channels import ChannelReader, ChannelWriter, WritableStream
 
