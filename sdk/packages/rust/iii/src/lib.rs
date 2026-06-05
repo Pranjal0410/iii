@@ -18,7 +18,7 @@ pub use channels::{ChannelReader, ChannelWriter, StreamChannelRef};
 pub use error::IIIError;
 pub use iii::{
     FunctionInfo, FunctionRef, III, IIIConnectionState, RegisterFunction, RegisterTriggerType,
-    TriggerInfo, TriggerTypeInfo, TriggerTypeRef, WorkerInfo, WorkerMetadata,
+    TriggerInfo, TriggerTypeRef, WorkerInfo, WorkerMetadata,
 };
 pub use protocol::{
     EnqueueResult, ErrorBody, FunctionMessage, HttpAuthConfig, HttpInvocationConfig, HttpMethod,
