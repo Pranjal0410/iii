@@ -18,7 +18,7 @@ from iii_observability import OtelConfig
 from websockets.asyncio.client import ClientConnection
 
 from .channels import ChannelReader, ChannelWriter
-from .errors import IIIInvocationError, IIITimeoutError, _wrap_wire_error
+from .errors import IIIInvocationError, _wrap_wire_error
 from .format_utils import extract_request_format, extract_response_format
 from .iii_constants import (
     DEFAULT_RECONNECTION_CONFIG,
@@ -438,6 +438,8 @@ class III:
             )
         elif msg_type == MessageType.REGISTER_TRIGGER.value:
             asyncio.create_task(self._handle_trigger_registration(data))
+        elif msg_type == MessageType.UNREGISTER_TRIGGER.value:
+            asyncio.create_task(self._handle_trigger_unregistration(data))
         elif msg_type == MessageType.TRIGGER_REGISTRATION_RESULT.value:
             self._handle_trigger_registration_result(data)
         elif msg_type == MessageType.WORKER_REGISTERED.value:
@@ -480,6 +482,7 @@ class III:
 
     async def _invoke_with_otel_context(
         self,
+        function_id: str,
         handler: Callable[[Any], Awaitable[Any]],
         data: Any,
         traceparent: str | None,
@@ -507,10 +510,16 @@ class III:
         )
         payload_max_bytes = resolve_max_bytes_from_env()
 
+        # INTERNAL and named `execute` (not `call`/`trigger`): the engine
+        # already emits the SERVER `call <fn>` span for this hop AND a
+        # `trigger <fn>` span from fire_triggers. Reusing either name would
+        # duplicate an engine span under the worker's service. `execute` is
+        # unique, so the worker handler span reads as a clean internal child
+        # of the engine's call span (and is collapsible by a single rule).
         with tracer.start_as_current_span(
-            f"call {handler.__name__}",
+            f"execute {function_id}",
             context=parent_ctx,
-            kind=trace.SpanKind.SERVER,
+            kind=trace.SpanKind.INTERNAL,
         ) as span:
             if trace_payloads and span.is_recording():
                 input_json, input_truncated = redact_and_truncate(data, payload_max_bytes)
@@ -618,7 +627,7 @@ class III:
         if not invocation_id:
             task = asyncio.create_task(
                 self._invoke_with_otel_context(
-                    func.handler, resolved_data, traceparent, baggage
+                    path, func.handler, resolved_data, traceparent, baggage
                 )
             )
             task.add_done_callback(self._log_task_exception)
@@ -626,6 +635,7 @@ class III:
 
         try:
             result, response_traceparent = await self._invoke_with_otel_context(
+                path,
                 func.handler,
                 resolved_data,
                 traceparent,
@@ -717,6 +727,32 @@ class III:
             trigger_type,
             message,
         )
+
+    async def _handle_trigger_unregistration(self, data: dict[str, Any]) -> None:
+        trigger_type_id = data.get("trigger_type")
+        if not trigger_type_id:
+            return
+
+        handler_data = self._trigger_types.get(trigger_type_id)
+        if not handler_data:
+            return
+
+        trigger_id = data.get("id", "")
+        function_id = data.get("function_id", "")
+        config = data.get("config")
+        metadata = data.get("metadata")
+
+        try:
+            await handler_data.handler.unregister_trigger(
+                TriggerConfig(
+                    id=trigger_id,
+                    function_id=function_id,
+                    config=config,
+                    metadata=metadata,
+                )
+            )
+        except Exception:
+            log.exception(f"Error unregistering trigger {trigger_id}")
 
     # Connection state management
 
@@ -1045,9 +1081,9 @@ class III:
             actions.
 
         Raises:
-            IIITimeoutError: If the invocation times out. ``code == 'TIMEOUT'``.
-            IIIForbiddenError: If RBAC denies the invocation. ``code == 'FORBIDDEN'``.
-            IIIInvocationError: For any other engine rejection.
+            IIIInvocationError: For any engine rejection. Inspect ``code``:
+                ``'TIMEOUT'`` if the invocation timed out, ``'FORBIDDEN'`` if
+                RBAC denied it.
 
         Examples:
             >>> result = iii.trigger({'function_id': 'greet', 'payload': {'name': 'World'}})
@@ -1072,9 +1108,9 @@ class III:
             The result of the function invocation, or ``None`` for void calls.
 
         Raises:
-            IIITimeoutError: If the invocation times out. ``code == 'TIMEOUT'``.
-            IIIForbiddenError: If RBAC denies the invocation. ``code == 'FORBIDDEN'``.
-            IIIInvocationError: For any other engine rejection.
+            IIIInvocationError: For any engine rejection. Inspect ``code``:
+                ``'TIMEOUT'`` if the invocation timed out, ``'FORBIDDEN'`` if
+                RBAC denied it.
 
         Examples:
             >>> result = await iii.trigger_async({'function_id': 'greet', 'payload': {'name': 'World'}})
@@ -1135,7 +1171,7 @@ class III:
             return await asyncio.wait_for(future, timeout=timeout_secs)
         except asyncio.TimeoutError:
             self._pending.pop(invocation_id, None)
-            raise IIITimeoutError(
+            raise IIIInvocationError(
                 code="TIMEOUT",
                 message=f"invocation timed out after {timeout_ms}ms",
                 function_id=function_id,

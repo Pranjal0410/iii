@@ -86,17 +86,6 @@ pub struct TriggerInfo {
     pub metadata: Option<Value>,
 }
 
-/// Trigger type information returned by `engine::trigger-types::list`
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriggerTypeInfo {
-    pub id: String,
-    pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trigger_request_format: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub call_request_format: Option<Value>,
-}
-
 /// Builder for registering a custom trigger type with optional format schemas.
 ///
 /// Type parameters:
@@ -1433,6 +1422,9 @@ impl III {
             } => {
                 self.handle_register_trigger(id, trigger_type, function_id, config, metadata);
             }
+            Message::UnregisterTrigger { id, trigger_type } => {
+                self.handle_unregister_trigger(id, trigger_type);
+            }
             Message::Ping => {
                 let _ = self.send_message(Message::Pong);
             }
@@ -1549,9 +1541,15 @@ impl III {
 
                 let parent_cx = extract_context(traceparent.as_deref(), baggage.as_deref());
                 let tracer = iii_observability::opentelemetry::global::tracer("iii-rust-sdk");
+                // INTERNAL and named `execute` (not `call`/`trigger`): the engine
+                // already emits the SERVER `call <fn>` span for this hop AND a
+                // `trigger <fn>` span from fire_triggers. Reusing either name would
+                // duplicate an engine span under the worker's service. `execute` is
+                // unique, so the worker handler span reads as a clean internal child
+                // of the engine's call span (and is collapsible by a single rule).
                 let span = tracer
-                    .span_builder(format!("call {}", function_id))
-                    .with_kind(SpanKind::Server)
+                    .span_builder(format!("execute {}", function_id))
+                    .with_kind(SpanKind::Internal)
                     .start_with_context(&tracer, &parent_cx);
                 parent_cx.with_span(span)
             };
@@ -1768,6 +1766,32 @@ impl III {
             };
 
             let _ = iii.send_message(message);
+        });
+    }
+
+    fn handle_unregister_trigger(&self, id: String, trigger_type: String) {
+        let handler = self
+            .inner
+            .trigger_types
+            .lock_or_recover()
+            .get(&trigger_type)
+            .map(|data| data.handler.clone());
+
+        let Some(handler) = handler else {
+            return;
+        };
+
+        tokio::spawn(async move {
+            let config = TriggerConfig {
+                id: id.clone(),
+                function_id: String::new(),
+                config: Value::Null,
+                metadata: None,
+            };
+
+            if let Err(err) = handler.unregister_trigger(config).await {
+                tracing::warn!(trigger_id = %id, error = %err, "Error unregistering trigger");
+            }
         });
     }
 }

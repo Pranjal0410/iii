@@ -21,7 +21,6 @@ import {
   type RegisterTriggerMessage,
   type RegisterTriggerTypeMessage,
   type StreamChannelRef,
-  type TriggerAction as TriggerActionType,
   type TriggerRegistrationResultMessage,
   type TriggerRequest,
   type WorkerRegisteredMessage,
@@ -364,8 +363,14 @@ class Sdk implements ISdk {
           if (getTracer()) {
             const parentContext = extractContext(traceparent, baggage)
 
+            // INTERNAL and named `execute` (not `call`/`trigger`): the engine
+            // already emits the SERVER `call <fn>` span for this hop AND a
+            // `trigger <fn>` span from fire_triggers. Reusing either name would
+            // duplicate an engine span under the worker's service. `execute` is
+            // unique, so the worker handler span reads as a clean internal child
+            // of the engine's call span (and is collapsible by a single rule).
             return context.with(parentContext, () =>
-              withSpan(`call ${functionId}`, { kind: SpanKind.SERVER }, async () => await runHandler()),
+              withSpan(`execute ${functionId}`, { kind: SpanKind.INTERNAL }, async () => await runHandler()),
             )
           }
 
@@ -949,6 +954,27 @@ class Sdk implements ISdk {
     }
   }
 
+  private async onUnregisterTrigger(message: {
+    trigger_type?: string
+    id: string
+    function_id?: string
+    config?: unknown
+    metadata?: Record<string, unknown>
+  }) {
+    const trigger_type = message.trigger_type
+    if (!trigger_type) return
+
+    const triggerTypeData = this.triggerTypes.get(trigger_type)
+    if (!triggerTypeData) return
+
+    const { id, function_id = '', config, metadata } = message
+    try {
+      await triggerTypeData.handler.unregisterTrigger({ id, function_id, config, metadata })
+    } catch (error) {
+      this.logError(`Error unregistering trigger ${id}`, error)
+    }
+  }
+
   private onTriggerRegistrationResult(
     message: { id: string; trigger_type?: string; type?: string; function_id: string; error?: { code: string; message: string; stacktrace?: string } },
   ): void {
@@ -981,6 +1007,16 @@ class Sdk implements ISdk {
       this.onInvokeFunction(invocation_id, function_id, data, traceparent, baggage)
     } else if (msgType === MessageType.RegisterTrigger) {
       this.onRegisterTrigger(message as { trigger_type: string; id: string; function_id: string; config: unknown; metadata?: Record<string, unknown> })
+    } else if (msgType === MessageType.UnregisterTrigger) {
+      this.onUnregisterTrigger(
+        message as {
+          trigger_type?: string
+          id: string
+          function_id?: string
+          config?: unknown
+          metadata?: Record<string, unknown>
+        },
+      )
     } else if (msgType === MessageType.TriggerRegistrationResult) {
       this.onTriggerRegistrationResult(
         message as { id: string; trigger_type?: string; type?: string; function_id: string; error?: { code: string; message: string; stacktrace?: string } },
@@ -1025,12 +1061,12 @@ export const TriggerAction = {
    * @param opts - Queue routing options.
    * @param opts.queue - Name of the target queue.
    */
-  Enqueue: (opts: { queue: string }): TriggerActionType => ({ type: 'enqueue', ...opts }),
+  Enqueue: (opts: { queue: string }) => ({ type: 'enqueue' as const, ...opts }),
   /**
    * Fire-and-forget routing. The engine forwards the invocation without
    * waiting for a response or queuing the job.
    */
-  Void: (): TriggerActionType => ({ type: 'void' }),
+  Void: () => ({ type: 'void' as const }),
 } as const
 
 /**

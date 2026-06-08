@@ -14,7 +14,6 @@ import {
   type RegisterTriggerMessage,
   type RegisterTriggerTypeMessage,
   type StreamChannelRef,
-  type TriggerAction as TriggerActionType,
   type TriggerRegistrationResultMessage,
   type TriggerRequest,
 } from './iii-types'
@@ -706,6 +705,26 @@ class Sdk implements ISdk {
     }
   }
 
+  private async onUnregisterTrigger(message: {
+    trigger_type?: string
+    id: string
+    function_id?: string
+    config?: unknown
+  }) {
+    const trigger_type = message.trigger_type
+    if (!trigger_type) return
+
+    const triggerTypeData = this.triggerTypes.get(trigger_type)
+    if (!triggerTypeData) return
+
+    const { id, function_id = '', config } = message
+    try {
+      await triggerTypeData.handler.unregisterTrigger({ id, function_id, config })
+    } catch (error) {
+      console.error(`[iii] Error unregistering trigger ${id}`, error)
+    }
+  }
+
   private onMessage(event: MessageEvent): void {
     let msgType: MessageType
     let message: Record<string, unknown>
@@ -728,6 +747,10 @@ class Sdk implements ISdk {
       this.onInvokeFunction(invocation_id, function_id, data, traceparent, baggage)
     } else if (msgType === MessageType.RegisterTrigger) {
       this.onRegisterTrigger(message as { trigger_type: string; id: string; function_id: string; config: unknown })
+    } else if (msgType === MessageType.UnregisterTrigger) {
+      this.onUnregisterTrigger(
+        message as { trigger_type?: string; id: string; function_id?: string; config?: unknown },
+      )
     }
   }
 }
@@ -763,12 +786,12 @@ export const TriggerAction = {
    * @param opts - Queue routing options.
    * @param opts.queue - Name of the target queue.
    */
-  Enqueue: (opts: { queue: string }): TriggerActionType => ({ type: 'enqueue', ...opts }),
+  Enqueue: (opts: { queue: string }) => ({ type: 'enqueue' as const, ...opts }),
   /**
    * Fire-and-forget routing. The engine forwards the invocation without
    * waiting for a response or queuing the job.
    */
-  Void: (): TriggerActionType => ({ type: 'void' }),
+  Void: () => ({ type: 'void' as const }),
 } as const
 
 /**
