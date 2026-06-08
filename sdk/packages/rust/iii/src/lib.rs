@@ -9,6 +9,14 @@ pub mod structs;
 pub mod triggers;
 pub mod types;
 
+/// Public runtime/worker types. (Stage 1 submodule grouping.)
+pub mod runtime {
+    pub use crate::iii::{
+        FunctionInfo, FunctionRef, IIIConnectionState, TriggerInfo, TriggerTypeRef, WorkerInfo,
+        WorkerMetadata,
+    };
+}
+
 /// Public trigger types. (Stage 1 submodule grouping.)
 pub mod trigger {
     pub use crate::builtin_triggers::IIITrigger;
@@ -40,10 +48,12 @@ pub use error::Error;
     note = "renamed to Error; import from iii_sdk::errors"
 )]
 pub use error::Error as IIIError;
+#[deprecated(since = "0.19.0", note = "import from iii_sdk::runtime")]
 pub use iii::{
-    FunctionInfo, FunctionRef, III, IIIConnectionState, RegisterFunction, RegisterTriggerType,
-    TriggerInfo, TriggerTypeRef, WorkerInfo, WorkerMetadata,
+    FunctionInfo, FunctionRef, IIIConnectionState, TriggerInfo, TriggerTypeRef, WorkerInfo,
+    WorkerMetadata,
 };
+pub use iii::{III, RegisterFunction, RegisterTriggerType};
 pub use protocol::{
     EnqueueResult, ErrorBody, FunctionMessage, HttpAuthConfig, HttpInvocationConfig, HttpMethod,
     Message, RegisterFunctionMessage, RegisterTriggerInput, RegisterTriggerMessage,
@@ -76,7 +86,7 @@ pub use types::{
 #[derive(Debug, Clone, Default)]
 pub struct InitOptions {
     /// Custom worker metadata. Auto-detected if `None`.
-    pub metadata: Option<WorkerMetadata>,
+    pub metadata: Option<iii::WorkerMetadata>,
     /// Custom HTTP headers sent during the WebSocket handshake.
     pub headers: Option<std::collections::HashMap<String, String>>,
     /// OpenTelemetry configuration.
@@ -171,6 +181,20 @@ fn _ensure_is_channel_ref_not_top_level() {}
 /// ```
 #[allow(dead_code)]
 fn _ensure_create_channel_not_on_instance() {}
+
+// ---------------------------------------------------------------------------
+// Stage 1 runtime submodule: runtime/worker types are reachable at their new
+// canonical path `iii_sdk::runtime`.
+// ---------------------------------------------------------------------------
+
+/// ```rust,no_run
+/// use iii_sdk::runtime::{
+///     FunctionInfo, FunctionRef, IIIConnectionState, TriggerInfo, TriggerTypeRef, WorkerInfo,
+///     WorkerMetadata,
+/// };
+/// ```
+#[allow(dead_code)]
+fn _ensure_runtime_submodule_path() {}
 
 // ---------------------------------------------------------------------------
 // Stage 1 trigger submodule: trigger types are reachable at their new
