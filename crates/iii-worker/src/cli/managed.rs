@@ -43,10 +43,12 @@ pub use super::local_worker::{handle_local_add, is_local_path, start_local_worke
 /// its telemetry counters. Used for every worker type installed via `/resolve`
 /// (engine workers have no artifact; binary/image/bundle workers fetch their
 /// artifacts from external URLs the registry never sees, so this is the only
-/// install signal it gets). The endpoint returns 204 (no artifact); errors are
-/// logged as warnings and never block the install.
+/// install signal it gets). When a CI environment is detected, `ci=true` is
+/// also sent so the registry increments parallel `ci_count` columns. The
+/// endpoint returns 204 (no artifact); errors are logged as warnings and never
+/// block the install.
 async fn fire_worker_telemetry(name: &str, version: &str) {
-    use super::registry::HTTP_CLIENT;
+    use super::registry::{HTTP_CLIENT, with_download_query};
 
     let api_url =
         std::env::var("III_API_URL").unwrap_or_else(|_| "https://api.workers.iii.dev".to_string());
@@ -55,7 +57,7 @@ async fn fire_worker_telemetry(name: &str, version: &str) {
 
     match tokio::time::timeout(
         timeout,
-        HTTP_CLIENT.get(&url).query(&[("version", version)]).send(),
+        with_download_query(HTTP_CLIENT.get(&url), version).send(),
     )
     .await
     {
@@ -4046,8 +4048,11 @@ mod tests {
                         .split_whitespace();
                     let method = parts.next().unwrap_or_default();
                     let path = parts.next().unwrap_or("/");
-                    let keyed = format!("{method} {path}");
-                    let response = routes.get(&keyed).or_else(|| routes.get(path));
+                    // Strip query string so routes keyed as `GET /download/foo`
+                    // still match when the client appends `?version=…&ci=true`.
+                    let path_only = path.split('?').next().unwrap_or(path);
+                    let keyed = format!("{method} {path_only}");
+                    let response = routes.get(&keyed).or_else(|| routes.get(path_only));
 
                     let (status, content_type, body) = match response {
                         Some(response) => (
@@ -4958,6 +4963,8 @@ workers:
             .unwrap_or_else(|e| e.into_inner());
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+        crate::cli::registry::clear_ci_env_vars_for_test();
+
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -4985,6 +4992,53 @@ workers:
 
         let path = rx.await.expect("request captured");
         assert_eq!(path, "/download/iii-http?version=1.2.3%2Bbuild.5");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn fire_worker_telemetry_appends_ci_true_in_ci_environment() {
+        let _env_guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        crate::cli::registry::clear_ci_env_vars_for_test();
+        let _ci_guard = set_env_var_for_test("CI", "true");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let _api_guard = set_env_var_for_test("III_API_URL", &base_url);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut buf = [0_u8; 4096];
+            let n = stream.read(&mut buf).await.expect("read request");
+            let request = String::from_utf8_lossy(&buf[..n]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or_default()
+                .to_string();
+            let _ = tx.send(path);
+            let _ = stream
+                .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                .await;
+        });
+
+        fire_worker_telemetry("iii-http", "1.0.0").await;
+
+        let path = rx.await.expect("request captured");
+        assert!(
+            path.contains("ci=true"),
+            "expected ci=true in download telemetry request, got: {path}"
+        );
+        assert!(
+            path.contains("version=1.0.0"),
+            "expected version=1.0.0 in download telemetry request, got: {path}"
+        );
         server.abort();
     }
 
@@ -5092,10 +5146,16 @@ workers:
                 "binary worker should be installed on disk"
             );
             let hits = recorded.lock().unwrap().clone();
-            let expected = format!("/download/{worker_name}?version=1.0.0");
+            // `with_download_query` appends `ci=true` when a CI env var (CI,
+            // GITHUB_ACTIONS, ...) is present, so match on path + version and
+            // tolerate extra query params instead of full-string equality.
+            let expected_path = format!("/download/{worker_name}");
             assert!(
-                hits.iter().any(|p| p == &expected),
-                "expected GET {expected} telemetry hit, got: {hits:?}"
+                hits.iter().any(|hit| {
+                    let (path, query) = hit.split_once('?').unwrap_or((hit.as_str(), ""));
+                    path == expected_path && query.split('&').any(|pair| pair == "version=1.0.0")
+                }),
+                "expected GET {expected_path}?version=1.0.0 telemetry hit, got: {hits:?}"
             );
             server.abort();
         })
