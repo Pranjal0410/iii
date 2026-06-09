@@ -1,5 +1,6 @@
 pub mod builtin_triggers;
 pub mod channels;
+pub mod engine;
 pub mod error;
 pub mod helpers;
 pub mod iii;
@@ -42,6 +43,7 @@ pub use builtin_triggers::{
 };
 #[deprecated(since = "0.19.0", note = "import from iii_sdk::channel")]
 pub use channels::{ChannelReader, ChannelWriter, StreamChannelRef};
+pub use engine::{EngineFunctions, EngineTriggers};
 #[deprecated(
     since = "0.19.0",
     note = "renamed to Error; import from iii_sdk::errors"
@@ -234,6 +236,13 @@ fn _ensure_channel_submodule_path() {}
 /// ```
 #[allow(dead_code)]
 fn _ensure_errors_submodule_path() {}
+
+/// ```rust,no_run
+/// use iii_sdk::{EngineFunctions, EngineTriggers};
+/// let _ = (EngineFunctions::LIST_FUNCTIONS, EngineTriggers::LOG);
+/// ```
+#[allow(dead_code)]
+fn _ensure_engine_constants_path() {}
 
 /// ```rust,no_run
 /// use iii_sdk::errors::InvocationError;
