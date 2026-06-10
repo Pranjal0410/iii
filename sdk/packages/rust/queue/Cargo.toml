@@ -1,0 +1,18 @@
+[package]
+name = "iii-queue"
+version = "0.19.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["Motia LLC"]
+description = "Queue primitives shared across iii SDKs."
+repository = "https://github.com/iii-hq/iii"
+homepage = "https://github.com/iii-hq/iii"
+keywords = ["iii", "queue"]
+categories = ["api-bindings", "asynchronous", "development-tools"]
+
+[lib]
+name = "iii_queue"
+path = "src/lib.rs"
+
+[dependencies]

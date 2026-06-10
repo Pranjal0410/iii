@@ -77,12 +77,14 @@ _CARGO_PACKAGE_FILES = (
     "engine/Cargo.toml",
     "sdk/packages/rust/iii/Cargo.toml",
     "sdk/packages/rust/observability/Cargo.toml",
+    "sdk/packages/rust/queue/Cargo.toml",
     "console/packages/console-rust/Cargo.toml",
 )
 _JSON_PACKAGE_FILES = (
     "sdk/packages/node/iii/package.json",
     "sdk/packages/node/iii-browser/package.json",
     "sdk/packages/node/observability/package.json",
+    "sdk/packages/node/queue/package.json",
 )
 
 
@@ -114,6 +116,10 @@ def rewrite_all(root: Path, new_version: str, new_py_version: str) -> None:
     # Python observability: top-level version only
     py_obs = root / "sdk/packages/python/observability/pyproject.toml"
     py_obs.write_text(bump_cargo_package_version(py_obs.read_text(), new_py_version))
+
+    # Python queue: top-level version only
+    py_queue = root / "sdk/packages/python/queue/pyproject.toml"
+    py_queue.write_text(bump_cargo_package_version(py_queue.read_text(), new_py_version))
 
 
 import argparse
