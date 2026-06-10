@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Coroutine, TypeVar, cast
 
 import websockets
 from iii_observability import OtelConfig
+from iii_queue import TriggerActionEnqueue
 from websockets.asyncio.client import ClientConnection
 
 from .channels import ChannelReader, ChannelWriter
@@ -40,7 +41,6 @@ from .iii_types import (
     RegisterTriggerTypeInput,
     RegisterTriggerTypeMessage,
     StreamChannelRef,
-    TriggerActionEnqueue,
     TriggerActionVoid,
     TriggerRequest,
     UnregisterFunctionMessage,

@@ -3,6 +3,7 @@
 from enum import Enum
 from typing import Any, Literal
 
+from iii_queue import TriggerActionEnqueue
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -216,18 +217,6 @@ class RegisterFunctionMessage(BaseModel):
     metadata: dict[str, Any] | None = None
     invocation: HttpInvocationConfig | None = None
     message_type: MessageType = Field(default=MessageType.REGISTER_FUNCTION, alias="type")
-
-
-class TriggerActionEnqueue(BaseModel):
-    """Routes the invocation through a named queue for async processing.
-
-    Attributes:
-        type: Always ``'enqueue'``.
-        queue: Name of the target queue.
-    """
-
-    type: Literal["enqueue"] = "enqueue"
-    queue: str
 
 
 class TriggerActionVoid(BaseModel):

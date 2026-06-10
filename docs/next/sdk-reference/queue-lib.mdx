@@ -1,13 +1,13 @@
 ---
 title: "Queue library"
-description: "The iii queue library and its EnqueueResult type, shared across the Node, Python, and Rust SDKs."
+description: "The iii queue library and its EnqueueResult and TriggerActionEnqueue types, shared across the Node, Python, and Rust SDKs."
 owner: "engineering"
 type: "reference"
 ---
 
 The queue library is a small, standalone package shared across the iii SDKs. It holds queue
-primitives that several SDKs need to agree on. As of this version it exports a single type,
-`EnqueueResult`.
+primitives that several SDKs need to agree on. It exports `EnqueueResult` and, in the Node and
+Python packages, `TriggerActionEnqueue`.
 
 ## Packages
 
@@ -58,13 +58,70 @@ let result = EnqueueResult { message_receipt_id: "...".to_string() };
 `EnqueueResult` is a struct with a single field, `message_receipt_id` (String), serialized as
 `messageReceiptId` on the wire.
 
+## TriggerActionEnqueue
+
+`TriggerActionEnqueue` describes the enqueue trigger action: it routes an invocation through a named
+queue for async processing. The wire shape is a tagged object with `type` set to `enqueue` and a
+`queue` string naming the target queue.
+
+The Node and Python queue packages export `TriggerActionEnqueue` as a named type. Rust is
+asymmetric here: the queue crate does not export it. In Rust the enqueue action is defined in the
+core SDK as the `TriggerAction::Enqueue { queue }` variant, which is the wire enum used by `trigger()`.
+See the table at the end of this section for the per-language surface.
+
+### Node
+
+```ts
+import type { TriggerActionEnqueue } from '@iii-dev/queue'
+
+const action: TriggerActionEnqueue = { type: 'enqueue', queue: 'payments' }
+```
+
+`TriggerActionEnqueue` is a type with two fields: `type` (the literal `'enqueue'`) and `queue`
+(string). It mirrors the `{ type: 'enqueue'; queue: string }` member of the core `TriggerAction`
+union. The queue package type is an additive parity surface: the core union is unchanged and does
+not depend on the queue package.
+
+### Python
+
+```python
+from iii_queue import TriggerActionEnqueue
+
+action = TriggerActionEnqueue(queue="payments")
+```
+
+`TriggerActionEnqueue` is a Pydantic model with two fields: `type` (the literal `"enqueue"`,
+defaulting to `"enqueue"`) and `queue` (str). The core `TriggerAction` union references this model
+by importing it from `iii_queue`, so the public union is unchanged.
+
+### Rust
+
+Rust does not export `TriggerActionEnqueue` from the queue crate. The enqueue action is the
+`TriggerAction::Enqueue { queue }` variant in the core SDK (`iii_sdk`), serialized as
+`{ "type": "enqueue", "queue": "..." }` on the wire.
+
+```rust
+use iii_sdk::TriggerAction;
+
+let action = TriggerAction::Enqueue { queue: "payments".to_string() };
+```
+
+### Per-language surface
+
+| Language | Symbol | Where it is defined |
+| -------- | ------ | -------------- |
+| Node | `TriggerActionEnqueue` type | `@iii-dev/queue` (additive; core keeps its inline union) |
+| Python | `TriggerActionEnqueue` model | `iii_queue` (core union imports it from here) |
+| Rust | `TriggerAction::Enqueue { queue }` variant | `iii_sdk` core (the queue crate does not export it) |
+
 ## Deprecated root re-exports
 
-For backward compatibility, the root SDK still resolves `EnqueueResult` at its old path. These paths
-are deprecated and emit a deprecation notice. Prefer the queue library import shown above.
+For backward compatibility, the root SDK still resolves these symbols at their old paths. These
+paths are deprecated and emit a deprecation notice. Prefer the queue library import shown above.
 
 | Language | Deprecated path | Replacement |
 | -------- | --------------- | ----------- |
 | Node | `EnqueueResult` from `iii-sdk` root | `EnqueueResult` from `@iii-dev/queue` |
 | Python | `from iii import EnqueueResult` | `from iii_queue import EnqueueResult` |
 | Rust | `iii_sdk::EnqueueResult` | `iii_queue::EnqueueResult` |
+| Python | `from iii import TriggerActionEnqueue` | `from iii_queue import TriggerActionEnqueue` |

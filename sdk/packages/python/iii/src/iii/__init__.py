@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from iii_queue import EnqueueResult
+from iii_queue import EnqueueResult, TriggerActionEnqueue
 
 from .channels import ChannelReader, ChannelWriter
 from .errors import InvocationError
@@ -35,7 +35,6 @@ from .iii_types import (
     RegisterTriggerTypeInput,
     RegisterTriggerTypeMessage,
     StreamChannelRef,
-    TriggerActionEnqueue,
     TriggerActionVoid,
     TriggerRequest,
 )
