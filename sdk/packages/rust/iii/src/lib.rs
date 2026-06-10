@@ -65,9 +65,14 @@ pub use iii::{
     WorkerMetadata,
 };
 pub use iii::{IIIClient, RegisterFunction, RegisterTriggerType};
+#[deprecated(
+    since = "0.20.0",
+    note = "import from iii-queue (iii_queue::EnqueueResult)"
+)]
+pub use iii_queue::EnqueueResult;
 pub use protocol::{
-    EnqueueResult, ErrorBody, FunctionMessage, HttpAuthConfig, HttpInvocationConfig, HttpMethod,
-    Message, RegisterFunctionMessage, RegisterTriggerInput, RegisterTriggerMessage,
+    ErrorBody, FunctionMessage, HttpAuthConfig, HttpInvocationConfig, HttpMethod, Message,
+    RegisterFunctionMessage, RegisterTriggerInput, RegisterTriggerMessage,
     RegisterTriggerTypeMessage, TriggerAction, TriggerRequest,
 };
 pub use stream_provider::IStream;

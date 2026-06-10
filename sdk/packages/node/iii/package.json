@@ -65,6 +65,7 @@
   },
   "dependencies": {
     "@iii-dev/observability": "workspace:*",
+    "@iii-dev/queue": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "ws": "^8.18.3"
   },

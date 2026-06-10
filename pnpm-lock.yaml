@@ -169,6 +169,9 @@ importers:
       '@iii-dev/observability':
         specifier: workspace:*
         version: link:../observability
+      '@iii-dev/queue':
+        specifier: workspace:*
+        version: link:../queue
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.0

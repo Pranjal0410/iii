@@ -11,10 +11,12 @@ export { type InitOptions, registerWorker, type TelemetryOptions, TriggerAction 
 
 export { EngineFunctions, EngineTriggers } from './iii-constants'
 
+/** @deprecated Import `EnqueueResult` from `@iii-dev/queue`. */
+export type { EnqueueResult } from '@iii-dev/queue'
+
 export type {
   AuthInput,
   AuthResult,
-  EnqueueResult,
   HttpAuthConfig,
   HttpInvocationConfig,
   MessageType,

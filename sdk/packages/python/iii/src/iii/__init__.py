@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from iii_queue import EnqueueResult
+
 from .channels import ChannelReader, ChannelWriter
 from .errors import InvocationError
 from .format_utils import extract_request_format, extract_response_format, python_type_to_format
@@ -16,7 +18,6 @@ from .iii_constants import (
 from .iii_types import (
     AuthInput,
     AuthResult,
-    EnqueueResult,
     HttpAuthConfig,
     HttpInvocationConfig,
     MessageType,

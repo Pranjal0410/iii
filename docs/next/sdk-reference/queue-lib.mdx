@@ -1,0 +1,70 @@
+---
+title: "Queue library"
+description: "The iii queue library and its EnqueueResult type, shared across the Node, Python, and Rust SDKs."
+owner: "engineering"
+type: "reference"
+---
+
+The queue library is a small, standalone package shared across the iii SDKs. It holds queue
+primitives that several SDKs need to agree on. As of this version it exports a single type,
+`EnqueueResult`.
+
+## Packages
+
+| Language | Package | Import name |
+| -------- | ------- | ----------- |
+| Node | `@iii-dev/queue` (npm) | `@iii-dev/queue` |
+| Python | `iii-queue` (PyPI) | `iii_queue` |
+| Rust | `iii-queue` (crate) | `iii_queue` |
+
+The root SDK packages (`iii-sdk` on npm, `iii-sdk` on PyPI, `iii-sdk` on crates.io) depend on the
+queue library and re-export `EnqueueResult` from their old root paths as a deprecated shim. New code
+should import `EnqueueResult` from the queue library directly.
+
+## EnqueueResult
+
+`EnqueueResult` is the value returned when a function is invoked with the enqueue trigger action. The
+engine acknowledges the enqueue and returns a receipt id for the enqueued message. The wire field is
+`messageReceiptId` (a string) in all three languages.
+
+### Node
+
+```ts
+import type { EnqueueResult } from '@iii-dev/queue'
+
+const result: EnqueueResult = { messageReceiptId: '...' }
+```
+
+`EnqueueResult` is a type with a single field, `messageReceiptId` (string).
+
+### Python
+
+```python
+from iii_queue import EnqueueResult
+
+result = EnqueueResult(messageReceiptId="...")
+```
+
+`EnqueueResult` is a Pydantic model with a single field, `messageReceiptId` (str).
+
+### Rust
+
+```rust
+use iii_queue::EnqueueResult;
+
+let result = EnqueueResult { message_receipt_id: "...".to_string() };
+```
+
+`EnqueueResult` is a struct with a single field, `message_receipt_id` (String), serialized as
+`messageReceiptId` on the wire.
+
+## Deprecated root re-exports
+
+For backward compatibility, the root SDK still resolves `EnqueueResult` at its old path. These paths
+are deprecated and emit a deprecation notice. Prefer the queue library import shown above.
+
+| Language | Deprecated path | Replacement |
+| -------- | --------------- | ----------- |
+| Node | `EnqueueResult` from `iii-sdk` root | `EnqueueResult` from `@iii-dev/queue` |
+| Python | `from iii import EnqueueResult` | `from iii_queue import EnqueueResult` |
+| Rust | `iii_sdk::EnqueueResult` | `iii_queue::EnqueueResult` |
