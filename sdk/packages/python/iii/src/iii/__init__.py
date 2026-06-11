@@ -2,6 +2,14 @@
 
 from typing import Any
 
+from iii_http import (
+    HttpAuthConfig,
+    HttpInvocationConfig,
+    HttpMethod,
+    HttpRequest,
+    HttpResponse,
+    http,
+)
 from iii_queue import EnqueueResult, TriggerActionEnqueue
 
 from .channels import ChannelReader, ChannelWriter
@@ -18,8 +26,6 @@ from .iii_constants import (
 from .iii_types import (
     AuthInput,
     AuthResult,
-    HttpAuthConfig,
-    HttpInvocationConfig,
     MessageType,
     MiddlewareFunctionInput,
     OnFunctionRegistrationInput,
@@ -52,15 +58,12 @@ from .types import (
     ApiRequest,
     ApiResponse,
     Channel,
-    HttpRequest,
-    HttpResponse,
     IIIClient,
     InternalHttpRequest,
     RemoteFunctionHandler,
     StreamRequest,
     StreamResponse,
 )
-from .utils import http
 
 __all__ = [
     # Channels
@@ -91,6 +94,7 @@ __all__ = [
     "EnqueueResult",
     "HttpAuthConfig",
     "HttpInvocationConfig",
+    "HttpMethod",
     "MessageType",
     "RegisterFunctionFormat",
     "RegisterFunctionMessage",

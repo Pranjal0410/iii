@@ -18,10 +18,10 @@ from typing import (
     TypeVar,
 )
 
-from pydantic import BaseModel, ConfigDict, Field
+from iii_http import HttpInvocationConfig, HttpRequest, HttpResponse
+from pydantic import BaseModel, ConfigDict
 
 from .iii_types import (
-    HttpInvocationConfig,
     RegisterFunctionMessage,
     RegisterTriggerInput,
     RegisterTriggerTypeInput,
@@ -34,7 +34,6 @@ from .triggers import Trigger, TriggerHandler
 if TYPE_CHECKING:
     from .channels import ChannelReader, ChannelWriter, WritableStream
 
-TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
 TConfig = TypeVar("TConfig")
 
@@ -114,24 +113,9 @@ class IIIClient(Protocol):
     def shutdown(self) -> None: ...
 
 
-class ApiRequest(BaseModel, Generic[TInput]):
-    """Represents an API request."""
-
-    path_params: dict[str, str] = Field(default_factory=dict)
-    query_params: dict[str, str | list[str]] = Field(default_factory=dict)
-    body: Any | None = None
-    headers: dict[str, str | list[str]] = Field(default_factory=dict)
-    method: str = "GET"
-
-
-class ApiResponse(BaseModel, Generic[TOutput]):
-    """Represents an API response."""
-
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
-
-    status_code: int = Field(alias="statusCode")
-    body: Any | None = None
-    headers: dict[str, str] = Field(default_factory=dict)
+# Deprecated; import ``HttpRequest`` / ``HttpResponse`` from ``iii_http``.
+ApiRequest = HttpRequest
+ApiResponse = HttpResponse
 
 
 @dataclass
@@ -191,11 +175,6 @@ class StreamRequest:
     headers: dict[str, str | list[str]]
     method: str
     request_body: ChannelReader
-
-
-# Back-compat aliases; renamed to StreamRequest / StreamResponse. Deprecated.
-HttpRequest = StreamRequest
-HttpResponse = StreamResponse
 
 
 class StreamChannelRefDict(TypedDict):

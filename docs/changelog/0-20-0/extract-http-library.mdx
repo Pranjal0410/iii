@@ -1,0 +1,85 @@
+---
+title: 'Extracting the HTTP library and reclaiming Http* for buffered types'
+description: 'HttpAuthConfig, HttpInvocationConfig, HttpMethod and the http helper move into the standalone HTTP library, the buffered ApiRequest/ApiResponse are renamed HttpRequest/HttpResponse, and the streaming Http* aliases are removed. Old root paths keep working as deprecated aliases.'
+---
+
+## What changed
+
+The HTTP primitives shared across the three SDKs move into a standalone HTTP library, and the
+buffered request and response types reclaim the `Http*` names. Old import paths continue to work as
+deprecated re-exports, so upgrading requires no immediate code changes.
+
+| Language | Package | Import name |
+| --- | --- | --- |
+| Node | `@iii-dev/http` (npm) | `@iii-dev/http` |
+| Python | `iii-http` (PyPI) | `iii_http` |
+| Rust | `iii-http` (crate) | `iii_http` |
+
+## Moved symbols
+
+`HttpAuthConfig`, `HttpInvocationConfig`, `HttpMethod`, and the `http` handler helper move into the
+HTTP library. In Python, the three auth models (`HttpAuthHmac`, `HttpAuthBearer`, `HttpAuthApiKey`)
+move with `HttpAuthConfig`. `HttpMethod` is a new named alias in Node and Python; in Rust it is the
+existing method enum referenced by `HttpInvocationConfig`. The wire shapes are unchanged.
+
+The core SDK keeps a second, distinct `HttpMethod` for the HTTP trigger config (the Rust
+core `builtin_triggers` module, which adds `Head` and `Options`). That trigger method type is
+unrelated and stays in the core SDK.
+
+## Http* reclaimed for buffered types
+
+Before this change, `HttpRequest` and `HttpResponse` were deprecated aliases of the streaming
+`StreamRequest` and `StreamResponse` types. Those streaming aliases are removed. The buffered
+`ApiRequest` and `ApiResponse` are renamed `HttpRequest` and `HttpResponse` and defined in the HTTP
+library. `ApiRequest` and `ApiResponse` remain as deprecated aliases of the buffered types.
+
+| Name | Before | After |
+| --- | --- | --- |
+| `HttpRequest` / `HttpResponse` | Deprecated aliases of streaming `Stream*` | Buffered types in the HTTP library |
+| `ApiRequest` / `ApiResponse` | Buffered types | Deprecated aliases of `HttpRequest` / `HttpResponse` |
+| `StreamRequest` / `StreamResponse` | Streaming types | Streaming types (unchanged) |
+
+In Rust, the core `StreamRequest` and `StreamResponse` are aliases of `iii_http::HttpRequest` and
+`iii_http::HttpResponse`.
+
+## Migration
+
+Update imports to the HTTP library. No runtime change is required until the deprecated root
+re-exports are removed in a future breaking release. If your handlers used `HttpRequest` or
+`HttpResponse` as the streaming request and response, switch those annotations to `StreamRequest`
+and `StreamResponse`.
+
+Node:
+
+```ts
+// Before
+import { http, type ApiResponse, type HttpInvocationConfig } from 'iii-sdk'
+// After
+import { http, type HttpResponse, type HttpInvocationConfig } from '@iii-dev/http'
+```
+
+Python:
+
+```python
+# Before
+from iii import http, ApiResponse, HttpInvocationConfig
+# After
+from iii_http import http, HttpResponse, HttpInvocationConfig
+```
+
+Rust:
+
+```rust
+// Before
+use iii_sdk::{ApiResponse, HttpInvocationConfig, HttpMethod};
+// After
+use iii_http::{HttpResponse, HttpInvocationConfig, HttpMethod};
+```
+
+## Why
+
+Extracting the HTTP primitives into a standalone library lets several SDKs and tools depend on the
+same types without pulling in the full SDK. Reclaiming `Http*` for the buffered types gives the
+common HTTP handler shape its natural name, and pairs it with the streaming `Stream*` types under a
+consistent naming scheme. Shipping the moves with deprecated aliases keeps the change backward
+compatible while consumers migrate.

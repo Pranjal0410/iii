@@ -545,6 +545,26 @@ wheels = [
 ]
 
 [[package]]
+name = "iii-http"
+version = "0.19.0"
+source = { editable = "../http" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
+    { name = "pytest-httpx", marker = "extra == 'dev'", specifier = ">=0.30" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.2" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "iii-observability"
 version = "0.19.0"
 source = { editable = "../observability" }
@@ -595,6 +615,7 @@ name = "iii-sdk"
 version = "0.19.0"
 source = { editable = "." }
 dependencies = [
+    { name = "iii-http" },
     { name = "iii-observability" },
     { name = "iii-queue" },
     { name = "opentelemetry-api" },
@@ -619,6 +640,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9" },
     { name = "anyio", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "griffe", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "iii-http", editable = "../http" },
     { name = "iii-observability", editable = "../observability" },
     { name = "iii-queue", editable = "../queue" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },

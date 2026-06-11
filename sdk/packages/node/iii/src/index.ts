@@ -14,11 +14,19 @@ export { EngineFunctions, EngineTriggers } from './iii-constants'
 /** @deprecated Import `EnqueueResult` from `@iii-dev/queue`. */
 export type { EnqueueResult } from '@iii-dev/queue'
 
+/** Buffered HTTP request/response types. Import from `@iii-dev/http`. */
+export type { HttpRequest, HttpResponse } from '@iii-dev/http'
+
+/** @deprecated Import `HttpAuthConfig` from `@iii-dev/http`. */
+export type { HttpAuthConfig } from '@iii-dev/http'
+/** @deprecated Import `HttpInvocationConfig` from `@iii-dev/http`. */
+export type { HttpInvocationConfig } from '@iii-dev/http'
+/** @deprecated Import `HttpMethod` from `@iii-dev/http`. */
+export type { HttpMethod } from '@iii-dev/http'
+
 export type {
   AuthInput,
   AuthResult,
-  HttpAuthConfig,
-  HttpInvocationConfig,
   MessageType,
   MiddlewareFunctionInput,
   OnFunctionRegistrationInput,
@@ -37,8 +45,6 @@ export type {
 export type { Trigger, TriggerConfig, TriggerHandler } from './trigger'
 
 export type {
-  ApiRequest,
-  ApiResponse,
   IIIClient,
   InternalHttpRequest,
   RegisterFunctionInput,
@@ -50,13 +56,16 @@ export type {
   StreamResponse,
 } from './types'
 
+/** @deprecated Import `HttpRequest` from `@iii-dev/http`. */
+export type { ApiRequest } from './types'
+/** @deprecated Import `HttpResponse` from `@iii-dev/http`. */
+export type { ApiResponse } from './types'
+
 /** @deprecated Renamed to `IIIClient`. */
 export type { ISdk } from './types'
-
-/** @deprecated `HttpRequest`/`HttpResponse` renamed to `StreamRequest`/`StreamResponse`. */
-export type { HttpRequest, HttpResponse } from './types'
 
 /** @deprecated Import runtime types from `iii-sdk/runtime`. */
 export type { FunctionRef, TriggerTypeRef } from './runtime'
 
-export { http } from './utils'
+/** @deprecated Import `http` from `@iii-dev/http`. */
+export { http } from '@iii-dev/http'

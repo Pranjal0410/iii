@@ -14,6 +14,7 @@ from importlib.metadata import version
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar, cast
 
 import websockets
+from iii_http import HttpInvocationConfig
 from iii_observability import OtelConfig
 from iii_queue import TriggerActionEnqueue
 from websockets.asyncio.client import ClientConnection
@@ -29,7 +30,6 @@ from .iii_constants import (
     InitOptions,
 )
 from .iii_types import (
-    HttpInvocationConfig,
     InvocationResultMessage,
     InvokeFunctionMessage,
     MessageType,

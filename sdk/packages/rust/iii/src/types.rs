@@ -332,39 +332,15 @@ pub struct RemoteTriggerTypeData {
     pub handler: Arc<dyn TriggerHandler>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiRequest<T = Value> {
-    #[serde(default)]
-    pub query_params: HashMap<String, String>,
-    #[serde(default)]
-    pub path_params: HashMap<String, String>,
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
-    #[serde(default)]
-    pub path: String,
-    #[serde(default)]
-    pub method: String,
-    #[serde(default)]
-    pub body: T,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiResponse<T = Value> {
-    pub status_code: u16,
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
-    pub body: T,
-}
-
 /// Streaming request type, mirroring the Node and Python `StreamRequest`.
 ///
-/// Alias of [`ApiRequest`]; added for cross-language parity.
-pub type StreamRequest<T = Value> = ApiRequest<T>;
+/// Alias of [`iii_http::HttpRequest`]; added for cross-language parity.
+pub type StreamRequest<T = Value> = iii_http::HttpRequest<T>;
 
 /// Streaming response type, mirroring the Node and Python `StreamResponse`.
 ///
-/// Alias of [`ApiResponse`]; added for cross-language parity.
-pub type StreamResponse<T = Value> = ApiResponse<T>;
+/// Alias of [`iii_http::HttpResponse`]; added for cross-language parity.
+pub type StreamResponse<T = Value> = iii_http::HttpResponse<T>;
 
 /// A streaming channel pair for worker-to-worker data transfer.
 pub struct Channel {
@@ -380,7 +356,7 @@ mod tests {
 
     #[test]
     fn api_request_defaults_when_missing_fields() {
-        let request: ApiRequest = serde_json::from_str("{}").unwrap();
+        let request: StreamRequest = serde_json::from_str("{}").unwrap();
 
         assert!(request.query_params.is_empty());
         assert!(request.path_params.is_empty());

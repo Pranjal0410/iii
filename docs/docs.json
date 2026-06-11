@@ -143,7 +143,8 @@
                   "next/sdk-reference/python-sdk",
                   "next/sdk-reference/rust-sdk",
                   "next/sdk-reference/browser-sdk",
-                  "next/sdk-reference/queue-lib"
+                  "next/sdk-reference/queue-lib",
+                  "next/sdk-reference/http-lib"
                 ]
               }
             ]
@@ -160,7 +161,8 @@
               {
                 "group": "0.20.0",
                 "pages": [
-                  "changelog/0-20-0/organize-sdk-imports"
+                  "changelog/0-20-0/organize-sdk-imports",
+                  "changelog/0-20-0/extract-http-library"
                 ]
               },
               {

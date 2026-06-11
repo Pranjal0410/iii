@@ -67,13 +67,24 @@ pub use iii::{
 pub use iii::{IIIClient, RegisterFunction, RegisterTriggerType};
 #[deprecated(
     since = "0.20.0",
+    note = "import from iii-http (iii_http::HttpAuthConfig / HttpInvocationConfig / HttpMethod)"
+)]
+pub use iii_http::{HttpAuthConfig, HttpInvocationConfig, HttpMethod};
+/// Buffered HTTP request/response types. Import from [`iii_http`].
+pub use iii_http::{HttpRequest, HttpResponse};
+#[deprecated(
+    since = "0.20.0",
+    note = "import from iii-http (iii_http::HttpRequest)"
+)]
+pub use iii_http::{HttpRequest as ApiRequest, HttpResponse as ApiResponse};
+#[deprecated(
+    since = "0.20.0",
     note = "import from iii-queue (iii_queue::EnqueueResult)"
 )]
 pub use iii_queue::EnqueueResult;
 pub use protocol::{
-    ErrorBody, FunctionMessage, HttpAuthConfig, HttpInvocationConfig, HttpMethod, Message,
-    RegisterFunctionMessage, RegisterTriggerInput, RegisterTriggerMessage,
-    RegisterTriggerTypeMessage, TriggerAction, TriggerRequest,
+    ErrorBody, FunctionMessage, Message, RegisterFunctionMessage, RegisterTriggerInput,
+    RegisterTriggerMessage, RegisterTriggerTypeMessage, TriggerAction, TriggerRequest,
 };
 pub use stream_provider::IStream;
 pub use structs::{
@@ -86,10 +97,9 @@ pub use triggers::{Trigger, TriggerConfig, TriggerHandler};
 #[deprecated(since = "0.19.0", note = "import from iii_sdk::channel")]
 pub use types::Channel;
 pub use types::{
-    ApiRequest, ApiResponse, DeleteResult, SetResult, StreamAuthInput, StreamAuthResult,
-    StreamDeleteInput, StreamGetInput, StreamJoinResult, StreamListGroupsInput, StreamListInput,
-    StreamRequest, StreamResponse, StreamSetInput, StreamUpdateInput, UpdateOp, UpdateOpError,
-    UpdateResult,
+    DeleteResult, SetResult, StreamAuthInput, StreamAuthResult, StreamDeleteInput, StreamGetInput,
+    StreamJoinResult, StreamListGroupsInput, StreamListInput, StreamRequest, StreamResponse,
+    StreamSetInput, StreamUpdateInput, UpdateOp, UpdateOpError, UpdateResult,
 };
 
 /// Configuration options passed to [`register_worker`].

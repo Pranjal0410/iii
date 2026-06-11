@@ -11,10 +11,10 @@ import time
 from typing import Any
 
 import pytest
+from iii_http import HttpAuthBearer
 
 from iii import HttpInvocationConfig, InitOptions
 from iii.iii import III
-from iii.iii_types import HttpAuthBearer
 
 
 def _unique_function_id(prefix: str) -> str:
