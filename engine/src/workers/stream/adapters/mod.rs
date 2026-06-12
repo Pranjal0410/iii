@@ -11,10 +11,7 @@ pub mod redis_adapter;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use iii_sdk::{
-    UpdateOp, UpdateResult,
-    types::{DeleteResult, SetResult},
-};
+use iii_helpers::stream::{DeleteResult, SetResult, UpdateOp, UpdateResult};
 use serde_json::Value;
 
 use crate::{

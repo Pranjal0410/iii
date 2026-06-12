@@ -20,10 +20,7 @@ use axum::{
 use chrono::Utc;
 use colored::Colorize;
 use function_macros::{function, service};
-use iii_sdk::{
-    UpdateResult,
-    types::{DeleteResult, SetResult},
-};
+use iii_helpers::stream::{DeleteResult, SetResult, UpdateResult};
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use tokio::{net::TcpListener, task::AbortHandle};
@@ -901,7 +898,12 @@ impl StreamWorker {
     }
 }
 
-crate::register_worker!("iii-stream", StreamWorker, enabled_by_default = true);
+crate::register_worker!(
+    "iii-stream",
+    StreamWorker,
+    description = "Build durable streams for real-time data subscriptions.",
+    enabled_by_default = true
+);
 
 #[cfg(test)]
 mod tests {
@@ -911,10 +913,7 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use iii_sdk::{
-        UpdateOp, UpdateResult,
-        types::{DeleteResult, SetResult},
-    };
+    use iii_helpers::stream::{DeleteResult, SetResult, UpdateOp, UpdateResult};
     use serde_json::Value;
     use tokio::sync::mpsc;
 
@@ -1338,7 +1337,7 @@ mod tests {
                 stream_name: stream_name.to_string(),
                 group_id: group_id.to_string(),
                 item_id: item_id.to_string(),
-                ops: vec![iii_sdk::UpdateOp::set("", updated_data.clone())],
+                ops: vec![iii_helpers::stream::UpdateOp::set("", updated_data.clone())],
             })
             .await;
 
@@ -1403,7 +1402,7 @@ mod tests {
                 stream_name: stream_name.to_string(),
                 group_id: group_id.to_string(),
                 item_id: item_id.to_string(),
-                ops: vec![iii_sdk::UpdateOp::set("", new_data.clone())],
+                ops: vec![iii_helpers::stream::UpdateOp::set("", new_data.clone())],
             })
             .await;
 

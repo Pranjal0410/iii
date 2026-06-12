@@ -102,7 +102,7 @@ impl TriggerRegistrator for StateWorker {
 
 #[cfg(test)]
 mod tests {
-    use iii_sdk::{UpdateOp, UpdateResult, types::SetResult};
+    use iii_helpers::stream::{SetResult, UpdateOp, UpdateResult};
     use serde_json::json;
 
     use super::*;

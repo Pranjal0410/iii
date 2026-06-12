@@ -7,7 +7,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use iii_sdk::{UpdateOp, UpdateResult, types::SetResult};
+use iii_helpers::stream::{SetResult, UpdateOp, UpdateResult};
 use redis::{AsyncCommands, Client, aio::ConnectionManager};
 use serde_json::Value;
 use tokio::{sync::Mutex, time::timeout};

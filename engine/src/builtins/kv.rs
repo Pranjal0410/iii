@@ -14,10 +14,7 @@ use std::{
 
 use indexmap::IndexMap;
 
-use iii_sdk::{
-    UpdateOp, UpdateResult,
-    types::{DeleteResult, SetResult},
-};
+use iii_helpers::stream::{DeleteResult, SetResult, UpdateOp, UpdateResult};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -500,7 +497,7 @@ impl BuiltinKvStore {
 
 #[cfg(test)]
 mod test {
-    use iii_sdk::UpdateOp;
+    use iii_helpers::stream::UpdateOp;
 
     use super::*;
 

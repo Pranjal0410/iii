@@ -158,10 +158,7 @@ mod tests {
         routing::get,
     };
     use futures_util::{SinkExt, StreamExt};
-    use iii_sdk::{
-        UpdateResult,
-        types::{DeleteResult, SetResult},
-    };
+    use iii_helpers::stream::{DeleteResult, SetResult, UpdateResult};
     use serde_json::{Value, json};
     use tokio::{
         net::TcpListener,
@@ -321,7 +318,7 @@ mod tests {
             _stream_name: &str,
             _group_id: &str,
             _item_id: &str,
-            _ops: Vec<iii_sdk::UpdateOp>,
+            _ops: Vec<iii_helpers::stream::UpdateOp>,
         ) -> anyhow::Result<UpdateResult> {
             Ok(UpdateResult {
                 old_value: None,

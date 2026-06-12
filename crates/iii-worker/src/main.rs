@@ -7,9 +7,53 @@
 use clap::{CommandFactory, FromArgMatches};
 use iii_worker::{Cli, Commands};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// A `stdout` tracing writer that never reports I/O errors back to the fmt
+/// layer. The fmt layer's sole error path is an `eprintln!`, which PANICS
+/// when stderr is *also* a broken pipe — precisely the engine-death case for
+/// the spawned daemons (`worker-manager-daemon`, `sandbox-daemon`): the engine
+/// consumed both fds 1 and 2, so when it dies the connection thread's very
+/// next reconnect log would panic the process (exit 101) before the
+/// engine-gone reaper runs. Swallowing the write error keeps the daemon alive;
+/// it then dup2's fds 1/2 onto its durable exit log
+/// (`daemon_exit::redirect_stdio_to_exit_log`) and these same writes land there
+/// as forensics. For one-shot CLI use it just turns a `… | head` EPIPE into a
+/// silent drop instead of a panic — strictly better either way.
+struct ResilientStdout;
+
+impl std::io::Write for ResilientStdout {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        Ok(())
+    }
+}
+
+impl tracing_subscriber::fmt::MakeWriter<'_> for ResilientStdout {
+    type Writer = ResilientStdout;
+    fn make_writer(&self) -> Self::Writer {
+        ResilientStdout
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    // FIRST, before the tokio runtime spawns worker threads: capture (and
+    // scrub from the env) any inherited lifeline facts. The capture mutates
+    // the process environment, which is only sound while single-threaded —
+    // see daemon_exit::capture_early.
+    iii_worker::daemon_exit::capture_early();
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
+        .with_writer(ResilientStdout)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
@@ -87,8 +131,7 @@ async fn main() -> anyhow::Result<()> {
                 // user sees as extra noise that scrolls real progress
                 // off-screen. Keep the sink quiet on the CLI path.
                 let sink = StderrSink::new(true);
-                let result =
-                    core_add::run(opts, &ctx, &sink, &CliHostShim, core_add::CallerMode::Cli).await;
+                let result = core_add::run(opts, &ctx, &sink, &CliHostShim).await;
 
                 if let Err(e) = result {
                     eprintln!("error: [{}] {}", e.kind().code(), e);
@@ -173,9 +216,7 @@ async fn main() -> anyhow::Result<()> {
                 // policy so we don't duplicate Stage events on top of
                 // the inner handler's progress output.
                 let sink = StderrSink::new(true);
-                if let Err(e) =
-                    core_add::run(opts, &ctx, &sink, &CliHostShim, core_add::CallerMode::Cli).await
-                {
+                if let Err(e) = core_add::run(opts, &ctx, &sink, &CliHostShim).await {
                     eprintln!("error: [{}] {}", e.kind().code(), e);
                     fail_count += 1;
                 }
@@ -523,12 +564,27 @@ async fn main() -> anyhow::Result<()> {
         Commands::WatchSource(args) => {
             let project = std::path::PathBuf::from(&args.project);
             let worker = args.worker.clone();
-            iii_worker::cli::source_watcher::watch_and_restart(
+            let watch = iii_worker::cli::source_watcher::watch_and_restart(
                 worker,
                 project,
                 iii_worker::cli::source_watcher::restart_via_cli,
-            )
-            .await?;
+            );
+            // Engine anchor: the watcher sidecar must not outlive the engine
+            // that (transitively) spawned it — `killall -9 iii` previously
+            // left one per dev worker running forever.
+            match iii_worker::daemon_exit::engine_pid_from_env() {
+                Some(pid) => {
+                    tokio::select! {
+                        r = watch => { r?; }
+                        _ = tokio::task::spawn_blocking(move || {
+                            iii_worker::daemon_exit::blocking_wait_pid_gone(pid)
+                        }) => {
+                            eprintln!("watch-source: engine pid {pid} exited; stopping");
+                        }
+                    }
+                }
+                None => watch.await?,
+            }
             0
         }
     };

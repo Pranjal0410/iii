@@ -9,7 +9,7 @@ pub mod kv_store;
 pub mod redis_adapter;
 
 use async_trait::async_trait;
-use iii_sdk::{UpdateOp, UpdateResult, types::SetResult};
+use iii_helpers::stream::{SetResult, UpdateOp, UpdateResult};
 use serde_json::Value;
 
 #[async_trait]

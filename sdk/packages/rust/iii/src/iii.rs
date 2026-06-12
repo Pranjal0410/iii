@@ -237,6 +237,10 @@ pub struct WorkerMetadata {
     pub version: String,
     pub name: String,
     pub os: String,
+    /// One-line, human/LLM-readable summary of what this worker does.
+    /// Surfaces in `engine::workers::list` / `engine::workers::info`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -271,6 +275,7 @@ impl Default for WorkerMetadata {
             version: SDK_VERSION.to_string(),
             name: format!("{}:{}", hostname, pid),
             os: os_info,
+            description: None,
             pid: Some(pid),
             telemetry: Some(TelemetryOptions {
                 language,
@@ -452,6 +457,43 @@ pub trait IntoAsyncHandler<Marker>: Send + Sync + 'static {
     }
 }
 
+/// Build the dispatchable handler for a typed async function: deserialize
+/// the JSON input as `T`, run `f`, serialize the result. Deserialization
+/// failures map through `on_bad_request` — [`IntoAsyncHandler`] passes the
+/// default [`Error::Serde`] mapper,
+/// [`RegisterFunction::new_async_with_bad_request`] a caller-supplied one.
+fn async_handler_with<F, T, Fut, R>(
+    f: F,
+    on_bad_request: impl Fn(serde_json::Error) -> Error + Send + Sync + 'static,
+) -> RemoteFunctionHandler
+where
+    F: Fn(T) -> Fut + Send + Sync + 'static,
+    T: serde::de::DeserializeOwned + Send + 'static,
+    Fut: std::future::Future<Output = Result<R, Error>> + Send + 'static,
+    R: serde::Serialize + Send + 'static,
+{
+    Arc::new(
+        move |input: Value| -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Value, Error>> + Send>,
+        > {
+            match serde_json::from_value::<T>(input) {
+                Ok(arg) => {
+                    let fut = f(arg);
+                    Box::pin(async move {
+                        fut.await.and_then(|val| {
+                            serde_json::to_value(&val).map_err(|e| Error::Serde(e.to_string()))
+                        })
+                    })
+                }
+                Err(e) => {
+                    let err = on_bad_request(e);
+                    Box::pin(async move { Err(err) })
+                }
+            }
+        },
+    )
+}
+
 // 1-arg async — deserializes the entire JSON input as T.
 //
 // Error type is fixed to [`Error`] (see [`IntoSyncHandler`] for the
@@ -465,23 +507,7 @@ where
     R: serde::Serialize + schemars::JsonSchema + Send + 'static,
 {
     fn into_handler(self) -> RemoteFunctionHandler {
-        Arc::new(
-            move |input: Value| -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = Result<Value, Error>> + Send>,
-            > {
-                match serde_json::from_value::<T>(input) {
-                    Ok(arg) => {
-                        let fut = (self)(arg);
-                        Box::pin(async move {
-                            fut.await.and_then(|val| {
-                                serde_json::to_value(&val).map_err(|e| Error::Serde(e.to_string()))
-                            })
-                        })
-                    }
-                    Err(e) => Box::pin(async move { Err(Error::Serde(e.to_string())) }),
-                }
-            },
-        )
+        async_handler_with(self, |e| Error::Serde(e.to_string()))
     }
 
     fn request_format() -> Option<Value> {
@@ -519,6 +545,9 @@ fn empty_message() -> RegisterFunctionMessage {
 ///   (schemas auto-extracted via `schemars`) and `Fn(Value) -> Result<Value, Error>`
 ///   closures (permissive `AnyValue` schema, since `Value: JsonSchema`).
 /// - [`RegisterFunction::new_async`] — async equivalent of `new`.
+/// - [`RegisterFunction::new_async_with_bad_request`] — typed async handler
+///   that routes payload-deserialization failures through a caller-supplied
+///   mapper instead of the SDK's generic [`Error::Serde`].
 /// - [`RegisterFunction::http`] — function invoked over HTTP (Lambda,
 ///   Cloudflare Workers, etc.).
 ///
@@ -564,6 +593,31 @@ impl RegisterFunction {
         Self {
             message,
             handler: Some(f.into_handler()),
+        }
+    }
+
+    /// Like [`RegisterFunction::new_async`], but payload-deserialization
+    /// failures are routed through `on_bad_request` instead of becoming the
+    /// SDK's generic [`Error::Serde`] (which the dispatch loop surfaces as
+    /// `invocation_failed`). Lets a registration keep typed-handler schema
+    /// extraction while owning its wire error contract for malformed
+    /// payloads — e.g. a stable error code plus a recovery hint.
+    pub fn new_async_with_bad_request<F, T, Fut, R>(
+        f: F,
+        on_bad_request: impl Fn(serde_json::Error) -> Error + Send + Sync + 'static,
+    ) -> Self
+    where
+        F: Fn(T) -> Fut + Send + Sync + 'static,
+        T: serde::de::DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        Fut: std::future::Future<Output = Result<R, Error>> + Send + 'static,
+        R: serde::Serialize + schemars::JsonSchema + Send + 'static,
+    {
+        let mut message = empty_message();
+        message.request_format = json_schema_for::<T>();
+        message.response_format = json_schema_for::<R>();
+        Self {
+            message,
+            handler: Some(async_handler_with(f, on_bad_request)),
         }
     }
 
@@ -1644,6 +1698,9 @@ impl IIIClient {
                                 KeyValue::new("exception.stacktrace", stacktrace.clone()),
                             ],
                         );
+                        // Consumed only by the non-`Remote` fallback arm when
+                        // building the wire ErrorBody below; `Remote` passes
+                        // its own (possibly absent) stacktrace through.
                         error_stacktrace = Some(stacktrace);
                     }
                 }
@@ -1676,9 +1733,11 @@ impl IIIClient {
                             } => ErrorBody {
                                 code,
                                 message,
-                                stacktrace: stacktrace.or(error_stacktrace).or_else(|| {
-                                    Some(std::backtrace::Backtrace::force_capture().to_string())
-                                }),
+                                // `Remote` is a structured, expected error owned by
+                                // the handler — respect `stacktrace: None` instead of
+                                // backfilling the dispatch-loop backtrace, which
+                                // points at the SDK event loop, not the error site.
+                                stacktrace,
                             },
                             other => ErrorBody {
                                 code: "invocation_failed".to_string(),
@@ -1970,6 +2029,56 @@ mod tests {
             reg.message.response_format.as_ref().unwrap()["title"],
             "Out"
         );
+    }
+
+    #[tokio::test]
+    async fn new_async_with_bad_request_maps_deser_failure_and_extracts_schemas() {
+        #[derive(serde::Deserialize, schemars::JsonSchema)]
+        struct In {
+            name: String,
+        }
+        #[derive(serde::Serialize, schemars::JsonSchema)]
+        struct Out {
+            message: String,
+        }
+
+        let reg = RegisterFunction::new_async_with_bad_request(
+            |input: In| async move {
+                Ok(Out {
+                    message: format!("Hello, {}!", input.name),
+                })
+            },
+            |e| Error::Remote {
+                code: "W105".to_string(),
+                message: e.to_string(),
+                stacktrace: None,
+            },
+        );
+
+        // Schema extraction matches the plain typed constructor.
+        assert_eq!(reg.message.request_format.as_ref().unwrap()["title"], "In");
+        assert_eq!(
+            reg.message.response_format.as_ref().unwrap()["title"],
+            "Out"
+        );
+
+        let handler = reg.handler.as_ref().unwrap();
+
+        // Malformed payload routes through the custom mapper, not Serde.
+        let err = handler(json!({"name": 42})).await.unwrap_err();
+        match err {
+            Error::Remote {
+                code, stacktrace, ..
+            } => {
+                assert_eq!(code, "W105");
+                assert!(stacktrace.is_none());
+            }
+            other => panic!("expected Remote, got {other:?}"),
+        }
+
+        // Valid payload still runs the handler.
+        let ok = handler(json!({"name": "iii"})).await.unwrap();
+        assert_eq!(ok["message"], "Hello, iii!");
     }
 
     #[tokio::test]

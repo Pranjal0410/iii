@@ -14,7 +14,7 @@ use once_cell::sync::Lazy;
 use serde_json::Value;
 use tracing::Instrument;
 
-use iii_sdk::types::{SetResult, UpdateResult};
+use iii_helpers::stream::{SetResult, UpdateResult};
 
 use crate::{
     condition::check_condition,
@@ -428,7 +428,12 @@ impl StateWorker {
     }
 }
 
-crate::register_worker!("iii-state", StateWorker, enabled_by_default = true);
+crate::register_worker!(
+    "iii-state",
+    StateWorker,
+    description = "Distributed key-value state management with reactive change triggers.",
+    enabled_by_default = true
+);
 
 #[cfg(test)]
 mod tests {
@@ -559,7 +564,7 @@ mod tests {
             &self,
             _scope: &str,
             _key: &str,
-            _ops: Vec<iii_sdk::UpdateOp>,
+            _ops: Vec<iii_helpers::stream::UpdateOp>,
         ) -> anyhow::Result<UpdateResult> {
             match self.update_error {
                 Some(message) => Err(anyhow::anyhow!(message)),
@@ -1005,7 +1010,7 @@ mod tests {
         let update_input = StateUpdateInput {
             scope: "scope".to_string(),
             key: "k".to_string(),
-            ops: vec![iii_sdk::UpdateOp::Set {
+            ops: vec![iii_helpers::stream::UpdateOp::Set {
                 path: "count".to_string(),
                 value: Some(serde_json::json!(42)),
             }],

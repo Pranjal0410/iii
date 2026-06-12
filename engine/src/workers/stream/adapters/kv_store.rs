@@ -7,10 +7,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use iii_sdk::{
-    UpdateOp, UpdateResult,
-    types::{DeleteResult, SetResult},
-};
+use iii_helpers::stream::{DeleteResult, SetResult, UpdateOp, UpdateResult};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

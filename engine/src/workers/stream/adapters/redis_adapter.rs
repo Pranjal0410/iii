@@ -26,10 +26,7 @@ use crate::{
         },
     },
 };
-use iii_sdk::{
-    UpdateOp, UpdateResult,
-    types::{DeleteResult, SetResult},
-};
+use iii_helpers::stream::{DeleteResult, SetResult, UpdateOp, UpdateResult};
 
 const STREAM_TOPIC: &str = "stream::events";
 
@@ -466,7 +463,7 @@ crate::register_adapter!(<StreamAdapterRegistration> name: "redis", make_adapter
 
 #[cfg(test)]
 mod tests {
-    use iii_sdk::UpdateOp;
+    use iii_helpers::stream::UpdateOp;
     use serde_json::json;
 
     use super::*;
