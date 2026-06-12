@@ -158,6 +158,12 @@
                 ]
               },
               {
+                "group": "0.20.0",
+                "pages": [
+                  "changelog/0-20-0/organize-sdk-imports"
+                ]
+              },
+              {
                 "group": "0.16.0",
                 "pages": [
                   "changelog/0-16-0/align-rust-register-function-with-signature"
