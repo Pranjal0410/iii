@@ -40,16 +40,16 @@ shell, package manager, or other userland in the image.
 
 ### What gets deployed
 
-The generated image packages the **engine and your `config.yaml`** — not your application code. Your
-application is made of workers, which come from two places:
+The generated image packages the **engine and your `config.yaml`**, not your application code. Your
+application is made of workers, and for deployment what matters is where each worker runs:
 
-- **Built-in workers** (`iii-http`, `iii-state`, `iii-queue`, `iii-cron`, `iii-stream`,
-  `iii-observability`, ...) run in-process inside the engine. You enable them by listing them in
-  `config.yaml`.
-- **Your own workers** (Node, Python, Rust) are separate processes that connect to the engine over
-  WebSocket. The engine image is distroless and carries no language runtime, so it cannot host them.
-  Deploy each as its own container and point `III_URL` at the engine
-  (`ws://iii:49134` on the compose network). See
+- Workers configured in `config.yaml` run in-process in the engine (for example `iii-http`,
+  `iii-state`, `iii-queue`, `iii-cron`, `iii-stream`, `iii-observability`). Enable them by listing
+  them in `config.yaml`.
+- Workers you run yourself (Node, Python, Rust) connect to the engine over WebSocket as separate
+  processes. The engine image is distroless and carries no language runtime, so it does not host
+  them. Deploy each as its own container and point `III_URL` at the engine (`ws://iii:49134` on the
+  compose network). See
   [Creating Workers / Connecting to the engine](../creating-workers/workers#connecting-to-the-engine).
 
 `iii project generate-docker` does not scaffold a sample app. A bare `iii project init` produces a
@@ -108,7 +108,7 @@ RabbitMQ](#scale-out-with-redis-and-rabbitmq).
 <Note>
   Port `9464` was the Prometheus metrics endpoint in older releases and still appears in the image's
   `EXPOSE` list and the generated assets. The current engine has no Prometheus exporter, so nothing
-  listens on it. Leave it unmapped and export metrics over OTLP — see
+  listens on it. Leave it unmapped and export metrics over OTLP. See
   [Observability](#observability).
 </Note>
 
@@ -175,7 +175,7 @@ CMD ["--config", "/app/config.yaml"]
 
 ## Configure workers and adapters
 
-The engine is stateless. State lives in workers, and each stateful worker selects a storage
+The engine is stateless. State is held in workers, and each stateful worker selects a storage
 **adapter** in `config.yaml`. The defaults are in-memory, tuned for local development, so choosing
 durable adapters is the main production step.
 
@@ -201,7 +201,7 @@ For each worker's full config fields, see the
 
 ### Make storage durable with file_based
 
-File-based storage is the simplest durable option: no extra services, just a writable path on a
+File-based storage is the simplest durable option: no extra services, only a writable path on a
 mounted volume. Set `store_method: file_based` and a `file_path` for each `kv`-backed worker.
 
 ```yaml
@@ -246,7 +246,7 @@ between flushes can drop the most recent writes; use Redis when you need stronge
   The storage adapter is restart-tier and persisted. After first boot, `iii-state` writes its live
   settings to `./data/configuration/iii-state.yaml` (the default `fs` configuration adapter), and the
   `config.yaml` adapter block becomes seed-only. Editing the adapter in `config.yaml` after that has
-  no effect — the persisted entry wins on the next boot. To change an adapter later, edit the
+  no effect. The persisted entry wins on the next boot. To change an adapter later, edit the
   persisted file or call `configuration::set`. On a fresh deploy with an empty `./data`, the
   `config.yaml` block is the seed.
 </Note>
@@ -254,7 +254,7 @@ between flushes can drop the most recent writes; use Redis when you need stronge
 ### Scale out with Redis and RabbitMQ
 
 File-based storage is single-instance. To run more than one engine replica, or for real-time
-fan-out across processes, move stateful workers to an external backend. This step is optional — a
+fan-out across processes, move stateful workers to an external backend. This step is optional. A
 single replica on file-based storage is a valid production setup.
 
 Match the backend to the workload:
@@ -340,10 +340,10 @@ volumes:
 
 <Note>
   Reference each backend by its compose service name (`redis://redis:6379`,
-  `amqp://...@rabbitmq:5672`), not `localhost` — inside the engine container `localhost` is the
+  `amqp://...@rabbitmq:5672`), not `localhost`. Inside the engine container, `localhost` is the
   engine. Keep credentials in environment variables; `${VAR:default}` expands in `config.yaml`, and
   the generated `.env` already carries `RABBITMQ_USER` / `RABBITMQ_PASS`. Switching a stateful worker
-  to a remote adapter after first boot requires updating the persisted configuration entry, not just
+  to a remote adapter after first boot requires updating the persisted configuration entry, not only
   the `config.yaml` block (see the note above).
 </Note>
 
@@ -352,14 +352,14 @@ volumes:
 A worker's `iii.worker.yaml` describes how the engine provisions and starts it. The development
 defaults favor fast iteration; production wants the opposite. Adjust the manifest before you ship:
 
-- `scripts.start` — drop watch mode so a code change does not restart the process and a crash is a
+- `scripts.start`: drop watch mode so a code change does not restart the process and a crash is a
   real signal: `node dist/index.js`, not `npx tsx watch src/index.ts`.
-- `scripts.install` — install from a lockfile without dev dependencies: `npm ci --omit=dev`.
-- `env` — inject production configuration. Keep secrets out of the file and supply them from the
+- `scripts.install`: install from a lockfile without dev dependencies: `npm ci --omit=dev`.
+- `env`: inject production configuration. Keep secrets out of the file and supply them from the
   environment. The keys `III_URL` and `III_ENGINE_URL` are ignored; the engine sets the connection
   URL.
-- `runtime.base_image` — pin a specific base image so builds are reproducible.
-- `resources` — set explicit `cpus` and `memory` for the worker's sandbox (defaults are 2 vCPU /
+- `runtime.base_image`: pin a specific base image so builds are reproducible.
+- `resources`: set explicit `cpus` and `memory` for the worker's sandbox (defaults are 2 vCPU /
   2048 MiB, capped at 4 / 4096).
 
 See the [Worker manifest reference](../creating-workers/worker-manifest) for every field.
@@ -368,15 +368,15 @@ See the [Worker manifest reference](../creating-workers/worker-manifest) for eve
 
 A real product composes several workers: the engine, its adapters (Redis, RabbitMQ), your own
 workers, and registry workers. The iii registry at [workers.iii.dev](https://workers.iii.dev) hosts
-the installable workers — `database` (PostgreSQL/MySQL/SQLite), `storage` (S3/GCS/R2/local),
-`harness`, `iii-sandbox`, and the rest — each added with `iii worker add <name>`.
+the installable workers: `database` (PostgreSQL/MySQL/SQLite), `storage` (S3/GCS/R2/local),
+`harness`, `iii-sandbox`, and the rest, each added with `iii worker add <name>`.
 
 Workers reach the engine in one of two ways, and which one you use decides how it deploys:
 
-- **Connect over WebSocket** — your own workers (and any worker you choose to run yourself) run as
+- **Connect over WebSocket**: your own workers (and any worker you choose to run yourself) run as
   their own container and point `III_URL` at the engine service. This is the portable, Compose-native
   pattern.
-- **Engine-managed** (added with `iii worker add`) — the engine runs them itself in libkrun
+- **Engine-managed** (added with `iii worker add`): the engine runs them itself in libkrun
   **micro-VMs**, including registry workers like `database`, `storage`, `harness`, and `iii-sandbox`.
   They run wherever the engine runs, so they ship inside the engine image, which must include the
   `iii worker` tooling (the `iii-worker` binary), and the host needs hardware virtualization
@@ -401,7 +401,7 @@ services:
       - III_EXECUTION_CONTEXT=docker
     restart: unless-stopped
 
-  # Your worker — your image, your code — connects to the engine over the network.
+  # Your worker (your image, your code) connects to the engine over the network.
   app-worker:
     build: ./worker            # a Node/Python/Rust image that runs your worker
     environment:
@@ -443,24 +443,24 @@ CMD ["node", "index.mjs"]
 
 ```javascript
 import { registerWorker } from "iii-sdk";
-const iii = registerWorker(process.env.III_URL); // ws://iii:49134
-// register functions and triggers...
+const worker = registerWorker(process.env.III_URL); // ws://iii:49134
+// worker.registerFunction(...) / worker.registerTrigger(...)
 ```
 
 Reference adapters by service name in `config.yaml` (`redis://redis:6379`,
 `amqp://...@rabbitmq:5672`); see
 [Scale out with Redis and RabbitMQ](#scale-out-with-redis-and-rabbitmq). Add as many of your own
-workers as the product needs — each is another service that connects over `III_URL`.
+workers as the product needs. Each is another service that connects over `III_URL`.
 
 ### Engine-managed workers (micro-VMs)
 
-Workers added with `iii worker add` — registry workers like `database`, `storage`, and `harness`, as
-well as `iii-sandbox` — are run by the engine itself in **libkrun micro-VMs**. The engine records them
+Workers added with `iii worker add` (registry workers like `database`, `storage`, and `harness`, as
+well as `iii-sandbox`) are run by the engine itself in **libkrun micro-VMs**. The engine records them
 in `config.yaml`, starts each one on boot, and passes it its own config (connection string,
 credentials):
 
 ```yaml
-# config.yaml — managed workers listed alongside the in-process ones
+# config.yaml: managed workers listed alongside the in-process ones
 workers:
   - name: database
     config:
@@ -470,7 +470,7 @@ workers:
       backend: s3                      # see the worker's own config reference
 ```
 
-Micro-VMs are managed by **`iii worker`** — the same tool you use to add and manage workers. It is its
+Micro-VMs are managed by **`iii worker`**, the same tool you use to add and manage workers. It is its
 own binary (`iii-worker`) that ships with the install alongside the `iii` engine and embeds the
 micro-VM firmware; it is normally invoked as `iii worker ...`, but the engine also calls it directly.
 This is not a separate language runtime. Running these workers in a container takes more than the
@@ -478,12 +478,12 @@ stock image:
 
 - **The stock `iiidev/iii` image cannot run them.** It is distroless: it ships only the `iii` engine
   binary, has no shell, and lacks the shared libraries `iii-worker` needs (for example
-  `libcap-ng.so.0`). Copying `iii-worker` into a `FROM iiidev/iii` build is not enough — it fails to
+  `libcap-ng.so.0`). Copying `iii-worker` into a `FROM iiidev/iii` build is not enough. It fails to
   load. Build the engine image on a glibc base (for example `debian-slim`) that has `iii-worker`'s
   library dependencies, and include both `iii` and `iii-worker`.
 - **Bake the workers at build time.** You cannot `RUN iii worker add` in a `FROM iiidev/iii` build (no
   shell), so install the workers from a shell-capable build stage (or on a host) and carry the
-  artifacts — `iii.lock` and `~/.iii/workers` — into the final image.
+  artifacts (`iii.lock` and `~/.iii/workers`) into the final image.
 - **Provide the KVM device.** Micro-VMs need hardware virtualization: `/dev/kvm` on a Linux host, or
   Apple Silicon when running the engine directly on macOS.
 
@@ -713,11 +713,11 @@ Probe from outside the container:
 
 The `iii-observability` worker collects traces, metrics, and logs through one of two exporters:
 
-- `memory` (default) — keeps recent telemetry in the engine for query through its observability
-  functions. Bounded by `memory_max_spans` and retention settings.
-- `otlp` — forwards traces, metrics, and logs to an OTLP collector. Use this in production.
+- `memory` (default): keeps recent observability data in the engine, queryable through its
+  observability functions. Bounded by `memory_max_spans` and retention settings.
+- `otlp`: forwards traces, metrics, and logs to an OTLP collector. Use this in production.
 
-Pick the port to match the protocol — this is the common mistake. Traces and metrics export over
+Pick the port to match the protocol. This is the common mistake. Traces and metrics export over
 OTLP/**gRPC** by default (collector port `4317`); logs always export over OTLP/**HTTP** to
 `<endpoint>/v1/logs` (collector port `4318`). So a single default-protocol `endpoint` can't satisfy
 all three: pointed at `4317` it delivers traces and metrics but drops logs.
@@ -740,7 +740,7 @@ workers:
 ```
 
 ```yaml
-# in the engine service's environment (Compose) — forces all signals onto HTTP/protobuf
+# in the engine service's environment (Compose): forces all signals onto HTTP/protobuf
 environment:
   - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 ```
@@ -781,7 +781,7 @@ endpoints.
 - [ ] Your own workers run as their own services pointing `III_URL` at the engine.
 - [ ] Engine-managed workers (`database`, `storage`, `harness`, `iii-sandbox`, ...) run on a
       glibc-based engine image that bundles `iii-worker` and its libraries (not the distroless stock
-      image), with `/dev/kvm` (Linux host) — not inside Docker Desktop on macOS — and each is listed
+      image), with `/dev/kvm` (Linux host, not inside Docker Desktop on macOS), and each is listed
       in `config.yaml` with its own config/secrets.
 
 **Networking and security**
