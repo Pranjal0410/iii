@@ -1,5 +1,5 @@
 ---
-title: "Deployment"
+title: "Self-hosted deployment"
 description: "Running iii in development, staging, and production."
 owner: "devrel"
 type: "how-to"
@@ -481,7 +481,7 @@ stock image:
   `libcap-ng.so.0`). Copying `iii-worker` into a `FROM iiidev/iii` build is not enough. It fails to
   load. Build the engine image on a glibc base (for example `debian-slim`) that has `iii-worker`'s
   library dependencies, and include both `iii` and `iii-worker`.
-- **Bake the workers at build time.** You cannot `RUN iii worker add` in a `FROM iiidev/iii` build (no
+- **Install the workers at build time.** You cannot `RUN iii worker add` in a `FROM iiidev/iii` build (no
   shell), so install the workers from a shell-capable build stage (or on a host) and carry the
   artifacts (`iii.lock` and `~/.iii/workers`) into the final image.
 - **Provide the KVM device.** Micro-VMs need hardware virtualization: `/dev/kvm` on a Linux host, or
@@ -490,7 +490,7 @@ stock image:
 ```yaml
 services:
   iii:
-    image: your-engine-image   # glibc base with iii + iii-worker + baked workers
+    image: your-engine-image   # glibc base with iii + iii-worker + installed workers
     devices:
       - /dev/kvm               # required for micro-VMs
     volumes:
@@ -510,6 +510,13 @@ services:
   Look it up on the worker's page at [workers.iii.dev](https://workers.iii.dev), and supply secrets
   from the environment.
 </Note>
+
+## Deploy to Railway
+
+Railway follows the same model: a clean base image plus workers you declare in
+`config.yaml`, with a few platform specifics (IPv6-only private networking,
+volumes for durable state, and a service per worker). See the dedicated
+[Deploy to Railway](./deploy-railway) guide.
 
 ## Hardening
 
@@ -552,7 +559,7 @@ workers:
 
 Use `${VAR}` / `${VAR:default}` placeholders in `config.yaml` and supply the values through the
 container environment or your orchestrator's secret store. The generated `.env` (which holds the
-RabbitMQ password) is git-ignored; do not bake secrets into the image.
+RabbitMQ password) is git-ignored; do not embed secrets in the image.
 
 ## RBAC
 
