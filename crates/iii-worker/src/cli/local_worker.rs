@@ -262,6 +262,11 @@ echo "iii: workspace ready; deps mounted VM-local from $DEPS_ROOT" >&2"#
         if !project.install_cmd.is_empty() {
             parts.push(project.install_cmd.clone());
         }
+        // Marker means "install ran with exit 0", not "deps are complete".
+        // iii-init deletes it (see supervisor.rs PREPARED_MARKER) when the
+        // worker crashes early, so an install that exits 0 but leaves a
+        // partial dep tree re-runs on the next boot instead of staying
+        // frozen.
         parts.push("mkdir -p /var && touch /var/.iii-prepared".to_string());
     }
 

@@ -35,6 +35,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::{Duration, Instant};
 
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
@@ -58,6 +59,27 @@ const III_WORKER_WORKDIR_ENV: &str = "III_WORKER_WORKDIR";
 /// the named port can't be found in sysfs, exec is simply unavailable
 /// for this VM — the worker child keeps running normally.
 const III_SHELL_PORT_ENV: &str = "III_SHELL_PORT";
+
+/// Marker file the host boot script touches after a successful
+/// setup+install (see `local_worker.rs::build_libkrun_local_script`). Its
+/// presence makes subsequent boots skip the install step and reuse the
+/// VM-local dep dirs. `/var` is host-backed, so the marker — and the
+/// cached deps — survive VM restarts.
+///
+/// The gate trusts the install command's exit code, not the resulting
+/// dep tree. An install that exits 0 but leaves an incomplete `node_modules`
+/// (e.g. a transient drop of one package) gets frozen behind the marker:
+/// every later boot reuses the broken deps and the worker crashes on the
+/// same missing import forever. Deleting this marker on an early crash
+/// forces the next boot to re-run install and self-heal.
+const PREPARED_MARKER: &str = "/var/.iii-prepared";
+
+/// If the worker child exits non-zero within this window of its initial
+/// spawn, treat it as a failed boot (broken deps / bad install) rather
+/// than a runtime crash and invalidate the prepared marker. A worker that
+/// ran longer than this booted fine, so a later exit is a runtime failure
+/// and the deps are not suspect.
+const BOOT_CRASH_WINDOW: Duration = Duration::from_secs(30);
 
 /// Stores the current child worker PID for async-signal-safe signal
 /// forwarding. 0 means no child has been spawned yet. Updated both on
@@ -99,6 +121,28 @@ fn install_signal_handlers() {
 /// done in `mount.rs` and may not exist on all kernels).
 fn attach_to_worker_cgroup(pid: i32) {
     let _ = std::fs::write("/sys/fs/cgroup/worker/cgroup.procs", pid.to_string());
+}
+
+/// Delete the prepared marker so the next boot re-runs setup/install.
+/// Best-effort: a missing marker (already gone, or never prepared) and a
+/// read-only `/var` are both non-fatal — we only log the unexpected case.
+fn invalidate_prepared_marker_at(path: &str) {
+    match std::fs::remove_file(path) {
+        Ok(()) => eprintln!(
+            "iii-init: worker exited non-zero during boot; cleared {path} \
+             so the next start re-runs install"
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => eprintln!("iii-init: warning: could not clear {path}: {e}"),
+    }
+}
+
+/// True when a child exit should invalidate the prepared marker: a real
+/// process exit (not a signal — `kill_for_shutdown` uses SIGTERM and must
+/// not be mistaken for a crash) with a non-zero code, soon enough after
+/// the initial spawn to implicate the boot/deps rather than the runtime.
+fn is_boot_failure(was_exit: bool, code: i32, spawned_at: Instant) -> bool {
+    was_exit && code != 0 && spawned_at.elapsed() < BOOT_CRASH_WINDOW
 }
 
 /// Entry point called from `main::run` after all boot setup is complete.
@@ -175,20 +219,24 @@ fn run_legacy(cmd: String) -> Result<(), InitError> {
     CHILD_PID.store(child_pid, Ordering::SeqCst);
 
     attach_to_worker_cgroup(child_pid);
+    let spawned_at = Instant::now();
 
     // PID 1 supervisor loop: wait for children, reap orphans (INIT-07).
     // Before applying our own termination logic, consult the shell
     // dispatcher's exit registry — exits belonging to `iii worker
     // exec` children must be forwarded to the dispatcher's waiter
     // thread, not silently discarded as "orphans".
-    let status = loop {
+    //
+    // The loop breaks with `(code, was_exit)` so the post-loop boot-crash
+    // check can tell a real non-zero process exit from a signal death.
+    let (status, was_exit) = loop {
         match waitpid(Pid::from_raw(-1), None) {
             Ok(WaitStatus::Exited(pid, code)) => {
                 if crate::child_exits::dispatch_exit(pid.as_raw(), code) {
                     continue;
                 }
                 if pid.as_raw() == child_pid {
-                    break code;
+                    break (code, true);
                 }
             }
             Ok(WaitStatus::Signaled(pid, sig, _)) => {
@@ -196,14 +244,18 @@ fn run_legacy(cmd: String) -> Result<(), InitError> {
                     continue;
                 }
                 if pid.as_raw() == child_pid {
-                    break 128 + sig as i32;
+                    break (128 + sig as i32, false);
                 }
             }
-            Ok(_) => continue,                  // stop/continue/etc, keep waiting
-            Err(nix::Error::ECHILD) => break 0, // no more children
-            Err(_) => break 1,                  // unexpected error
+            Ok(_) => continue, // stop/continue/etc, keep waiting
+            Err(nix::Error::ECHILD) => break (0, false), // no more children
+            Err(_) => break (1, false), // unexpected error
         }
     };
+
+    if is_boot_failure(was_exit, status, spawned_at) {
+        invalidate_prepared_marker_at(PREPARED_MARKER);
+    }
 
     std::process::exit(status);
 }
@@ -226,6 +278,11 @@ fn run_supervised(cmd: String, workdir: String, port_name: String) -> Result<(),
     })?;
     CHILD_PID.store(initial_pid as i32, Ordering::SeqCst);
     attach_to_worker_cgroup(initial_pid as i32);
+    // Timed from the initial spawn, not from any host-driven restart: a
+    // worker that booted, ran, then crashed after a source-edit restart is
+    // a runtime failure, and its deps are fine. Only a crash close to the
+    // first spawn implicates the install.
+    let spawned_at = Instant::now();
 
     // Open the named virtio-console port and spawn the control loop on
     // a dedicated thread. If the port isn't present (sysfs not mounted,
@@ -263,14 +320,14 @@ fn run_supervised(cmd: String, workdir: String, port_name: String) -> Result<(),
     // `exit_is_terminal` — otherwise an exec child's exit code would
     // look like an orphan and the dispatcher's waiter thread would
     // wait forever.
-    let status = loop {
+    let (status, was_exit) = loop {
         match waitpid(Pid::from_raw(-1), None) {
             Ok(WaitStatus::Exited(pid, code)) => {
                 if crate::child_exits::dispatch_exit(pid.as_raw(), code) {
                     continue;
                 }
                 if exit_is_terminal(&state, pid.as_raw()) {
-                    break code;
+                    break (code, true);
                 }
             }
             Ok(WaitStatus::Signaled(pid, sig, _)) => {
@@ -278,14 +335,18 @@ fn run_supervised(cmd: String, workdir: String, port_name: String) -> Result<(),
                     continue;
                 }
                 if exit_is_terminal(&state, pid.as_raw()) {
-                    break 128 + sig as i32;
+                    break (128 + sig as i32, false);
                 }
             }
-            Ok(_) => continue,                  // stop/continue/etc — keep waiting
-            Err(nix::Error::ECHILD) => break 0, // no more children
-            Err(_) => break 1,
+            Ok(_) => continue, // stop/continue/etc — keep waiting
+            Err(nix::Error::ECHILD) => break (0, false), // no more children
+            Err(_) => break (1, false),
         }
     };
+
+    if is_boot_failure(was_exit, status, spawned_at) {
+        invalidate_prepared_marker_at(PREPARED_MARKER);
+    }
 
     std::process::exit(status);
 }
@@ -403,5 +464,43 @@ mod tests {
         state.kill_for_shutdown().unwrap();
         // After shutdown, state has no child → terminal.
         assert!(exit_is_terminal(&state, new_pid as i32));
+    }
+
+    #[test]
+    fn is_boot_failure_classifies_exits() {
+        let now = Instant::now();
+
+        // Real non-zero exit, just after spawn → boot failure.
+        assert!(is_boot_failure(true, 1, now));
+
+        // Clean exit → not a failure.
+        assert!(!is_boot_failure(true, 0, now));
+
+        // Signal death (e.g. SIGTERM shutdown) → never a boot failure,
+        // even with a non-zero "128 + sig" code.
+        assert!(!is_boot_failure(false, 143, now));
+
+        // Non-zero exit, but long after spawn → runtime crash, deps fine.
+        if let Some(old) = now.checked_sub(BOOT_CRASH_WINDOW + Duration::from_secs(5)) {
+            assert!(!is_boot_failure(true, 1, old));
+        }
+    }
+
+    #[test]
+    fn invalidate_prepared_marker_removes_and_tolerates_missing() {
+        let path =
+            std::env::temp_dir().join(format!("iii-init-prepared-test-{}", std::process::id()));
+        let path_str = path.to_str().unwrap();
+
+        std::fs::write(&path, b"prepared").unwrap();
+        assert!(path.exists());
+
+        // Removes an existing marker.
+        invalidate_prepared_marker_at(path_str);
+        assert!(!path.exists());
+
+        // Tolerates an already-missing marker (no panic, no error).
+        invalidate_prepared_marker_at(path_str);
+        assert!(!path.exists());
     }
 }
