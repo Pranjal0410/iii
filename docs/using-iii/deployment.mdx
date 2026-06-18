@@ -565,12 +565,12 @@ workers:
   - name: iii-worker-manager
     config:
       host: 0.0.0.0
-      port: 49334            # main, trusted listener
+      port: 49134            # main, trusted listener
 
   - name: iii-worker-manager
     config:
       host: 0.0.0.0
-      port: 49335            # public RBAC listener
+      port: 49135            # public RBAC listener
       rbac:
         auth_function_id: my-project::auth-function
         expose_functions:
