@@ -85,6 +85,15 @@ pub struct FunctionQueueConfig {
     /// Defaults to 100.
     #[serde(default = "default_poll_interval_ms")]
     pub poll_interval_ms: u64,
+
+    /// Maximum message priority for this queue, turning it into a RabbitMQ
+    /// priority queue (`x-max-priority`). When set (1–255; ≤10 recommended),
+    /// each message carries a `priority` taken from its `_priority` field and
+    /// higher-priority messages are delivered first. Omit for a non-priority
+    /// queue. Cannot be changed after the queue is first declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = 255))]
+    pub max_priority: Option<u8>,
 }
 
 impl Default for FunctionQueueConfig {
@@ -96,6 +105,7 @@ impl Default for FunctionQueueConfig {
             message_group_field: None,
             backoff_ms: default_backoff_ms(),
             poll_interval_ms: default_poll_interval_ms(),
+            max_priority: None,
         }
     }
 }

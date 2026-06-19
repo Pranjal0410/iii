@@ -67,11 +67,20 @@ impl TopologyManager {
         Ok(())
     }
 
-    pub async fn setup_subscriber_queue(&self, topic: &str, function_id: &str) -> Result<()> {
+    pub async fn setup_subscriber_queue(
+        &self,
+        topic: &str,
+        function_id: &str,
+        max_priority: Option<u8>,
+    ) -> Result<()> {
         let names = RabbitNames::new(topic);
 
         let queue_name = names.function_queue(function_id);
         let dlq_name = names.function_dlq(function_id);
+        let mut subscriber_queue_args = FieldTable::default();
+        if let Some(p) = max_priority {
+            subscriber_queue_args.insert("x-max-priority".into(), AMQPValue::ShortShortUInt(p));
+        }
 
         self.channel
             .queue_declare(
@@ -91,7 +100,7 @@ impl TopologyManager {
                     durable: true,
                     ..Default::default()
                 },
-                FieldTable::default(),
+                subscriber_queue_args,
             )
             .await?;
 
@@ -114,7 +123,12 @@ impl TopologyManager {
         Ok(())
     }
 
-    pub async fn setup_function_queue(&self, queue_name: &str, backoff_ms: u64) -> Result<()> {
+    pub async fn setup_function_queue(
+        &self,
+        queue_name: &str,
+        backoff_ms: u64,
+        max_priority: Option<u8>,
+    ) -> Result<()> {
         let names = FnQueueNames::new(queue_name);
 
         // Main exchange + queue with DLX to retry
@@ -138,6 +152,9 @@ impl TopologyManager {
             "x-dead-letter-exchange".into(),
             AMQPValue::LongString(names.dlq_exchange().into()),
         );
+        if let Some(p) = max_priority {
+            main_queue_args.insert("x-max-priority".into(), AMQPValue::ShortShortUInt(p));
+        }
 
         self.channel
             .queue_declare(

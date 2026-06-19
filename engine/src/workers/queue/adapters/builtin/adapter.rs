@@ -700,6 +700,7 @@ mod tests {
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: Some(1000),
+            max_priority: None,
         };
 
         let subscription_config = Some(config).map(|c| SubscriptionConfig {
@@ -729,6 +730,7 @@ mod tests {
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: None,
+            max_priority: None,
         };
 
         let subscription_config = Some(config).map(|c| SubscriptionConfig {
@@ -756,6 +758,7 @@ mod tests {
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: None,
+            max_priority: None,
         };
 
         let subscription_config = Some(config).map(|c| SubscriptionConfig {
@@ -782,6 +785,7 @@ mod tests {
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: None,
+            max_priority: None,
         };
 
         let subscription_config = Some(config).map(|c| SubscriptionConfig {
@@ -855,6 +859,7 @@ mod tests {
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: Some(25),
+            max_priority: None,
         };
         adapter
             .subscribe("jobs", "sub-fifo", "queue.success", None, Some(fifo_config))
@@ -868,6 +873,7 @@ mod tests {
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: Some(10),
+            max_priority: None,
         };
         adapter
             .subscribe(

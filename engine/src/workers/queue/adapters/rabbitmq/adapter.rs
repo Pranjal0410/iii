@@ -247,7 +247,12 @@ impl QueueAdapter for RabbitMQAdapter {
         traceparent: Option<String>,
         baggage: Option<String>,
     ) {
-        let job = Job::new(topic, data, self.config.max_attempts, traceparent, baggage);
+        let priority = data
+            .get("_priority")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.min(255) as u8);
+        let mut job = Job::new(topic, data, self.config.max_attempts, traceparent, baggage);
+        job.priority = priority;
 
         if let Err(e) = self.topology.setup_topic(topic).await {
             tracing::error!(
@@ -307,9 +312,10 @@ impl QueueAdapter for RabbitMQAdapter {
             return;
         }
 
+        let effective_max_priority = queue_config.as_ref().and_then(|c| c.max_priority);
         if let Err(e) = self
             .topology
-            .setup_subscriber_queue(&topic, &function_id)
+            .setup_subscriber_queue(&topic, &function_id, effective_max_priority)
             .await
         {
             tracing::error!(
@@ -466,6 +472,11 @@ impl QueueAdapter for RabbitMQAdapter {
                             } else {
                                 properties
                             };
+                        let properties = if let Some(p) = delivery.delivery.properties.priority() {
+                            properties.with_priority(*p)
+                        } else {
+                            properties
+                        };
 
                         self.channel
                             .basic_publish(
@@ -560,6 +571,11 @@ impl QueueAdapter for RabbitMQAdapter {
                     // Copy message_id if present
                     let properties = if let Some(mid) = delivery_props.message_id() {
                         properties.with_message_id(mid.clone())
+                    } else {
+                        properties
+                    };
+                    let properties = if let Some(p) = delivery_props.priority() {
+                        properties.with_priority(*p)
                     } else {
                         properties
                     };
@@ -872,11 +888,19 @@ impl QueueAdapter for RabbitMQAdapter {
             );
         }
 
-        let properties = lapin::BasicProperties::default()
+        let priority = data
+            .get("_priority")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.min(255) as u8);
+
+        let mut properties = lapin::BasicProperties::default()
             .with_content_type("application/json".into())
             .with_delivery_mode(2)
             .with_message_id(message_id.into())
             .with_headers(headers);
+        if let Some(p) = priority {
+            properties = properties.with_priority(p);
+        }
 
         match self
             .channel
@@ -906,7 +930,7 @@ impl QueueAdapter for RabbitMQAdapter {
         config: &FunctionQueueConfig,
     ) -> anyhow::Result<()> {
         self.topology
-            .setup_function_queue(queue_name, config.backoff_ms)
+            .setup_function_queue(queue_name, config.backoff_ms, config.max_priority)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to setup function queue topology: {}", e))
     }
@@ -1101,6 +1125,10 @@ impl QueueAdapter for RabbitMQAdapter {
             // Preserve message_id through retries so DLQ messages remain identifiable
             if let Some(mid) = delivery.properties.message_id() {
                 properties = properties.with_message_id(mid.clone());
+            }
+            // Preserve priority through retries so priority queues keep ordering
+            if let Some(p) = delivery.properties.priority() {
+                properties = properties.with_priority(*p);
             }
 
             self.channel

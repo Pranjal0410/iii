@@ -128,10 +128,14 @@ impl Publisher {
     ) -> Result<()> {
         let payload = serde_json::to_vec(job)?;
 
-        let properties = lapin::BasicProperties::default()
+        let mut properties = lapin::BasicProperties::default()
             .with_content_type("application/json".into())
             .with_delivery_mode(2)
             .with_headers(headers.unwrap_or_default());
+
+        if let Some(p) = job.priority {
+            properties = properties.with_priority(p);
+        }
 
         self.channel
             .basic_publish(

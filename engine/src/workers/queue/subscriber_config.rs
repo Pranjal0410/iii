@@ -24,6 +24,7 @@ pub struct SubscriberQueueConfig {
     pub delay_seconds: Option<u64>,
     pub backoff_type: Option<String>,
     pub backoff_delay_ms: Option<u64>,
+    pub max_priority: Option<u8>,
 }
 
 impl SubscriberQueueConfig {
@@ -92,6 +93,14 @@ impl SubscriberQueueConfig {
             has_any_value,
             as_u64,
             |v| v
+        );
+        extract_field!(
+            config,
+            "maxPriority",
+            subscriber_config.max_priority,
+            has_any_value,
+            as_u64,
+            |v| v as u8
         );
 
         if has_any_value {

@@ -24,6 +24,8 @@ pub struct Job {
     pub traceparent: Option<String>,
     #[serde(default)]
     pub baggage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u8>,
 }
 
 impl Job {
@@ -46,6 +48,7 @@ impl Job {
                 .as_millis() as u64,
             traceparent,
             baggage,
+            priority: None,
         }
     }
 
