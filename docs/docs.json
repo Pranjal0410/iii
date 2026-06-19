@@ -89,7 +89,8 @@
                     "group": "Deployment",
                     "pages": [
                       "next/using-iii/deployment",
-                      "next/using-iii/deploy-railway"
+                      "next/using-iii/deploy-railway",
+                      "next/using-iii/deploy-fly"
                     ]
                   }
                 ]
@@ -198,7 +199,8 @@
                     "group": "Deployment",
                     "pages": [
                       "using-iii/deployment",
-                      "using-iii/deploy-railway"
+                      "using-iii/deploy-railway",
+                      "using-iii/deploy-fly"
                     ]
                   }
                 ]
