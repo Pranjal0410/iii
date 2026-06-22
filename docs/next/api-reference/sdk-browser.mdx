@@ -41,33 +41,33 @@ const iii = registerWorker('ws://localhost:49135')
 
 ## Methods
 
-### addConnectionStateListener
+### registerTrigger
 
-Subscribe to connection-state transitions. The handler is fired immediately
-with the current state, then on every transition. Multiple listeners are
-supported. Returns an unsubscribe function.
+Registers a new trigger. A trigger is a way to invoke a function when a certain event occurs.
 
 **Signature**
 
 ```typescript
-addConnectionStateListener(handler: (state: IIIConnectionState) => void) => () => void
+registerTrigger(trigger: RegisterTriggerInput) => Trigger
 ```
 
 #### Parameters
 
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
-| `handler` | (state: [`IIIConnectionState`](#iiiconnectionstate)) =&gt; void | Yes | - |
+| `trigger` | [`RegisterTriggerInput`](#registertriggerinput) | Yes | The trigger to register |
 
 #### Example
 
 ```typescript
-const unsub = iii.addConnectionStateListener((state) => {
-  console.log('connection state:', state)
+const trigger = iii.registerTrigger({
+  type: 'cron',
+  function_id: 'my-service::process-batch',
+  config: { expression: '0 */5 * * * * *' },
 })
 
-// Later, stop receiving updates
-unsub()
+// Later, remove the trigger
+trigger.unregister()
 ```
 
 ### registerFunction
@@ -100,88 +100,6 @@ const ref = iii.registerFunction(
 
 // Later, remove the function
 ref.unregister()
-```
-
-### registerTrigger
-
-Registers a new trigger. A trigger is a way to invoke a function when a certain event occurs.
-
-**Signature**
-
-```typescript
-registerTrigger(trigger: RegisterTriggerInput) => Trigger
-```
-
-#### Parameters
-
-| Name | Type | Required | Description |
-| --- | --- | --- | --- |
-| `trigger` | [`RegisterTriggerInput`](#registertriggerinput) | Yes | The trigger to register |
-
-#### Example
-
-```typescript
-const trigger = iii.registerTrigger({
-  type: 'cron',
-  function_id: 'my-service::process-batch',
-  config: { expression: '0 */5 * * * * *' },
-})
-
-// Later, remove the trigger
-trigger.unregister()
-```
-
-### registerTriggerType
-
-Registers a new trigger type. A trigger type is a way to invoke a function when a certain event occurs.
-
-**Signature**
-
-```typescript
-registerTriggerType(triggerType: RegisterTriggerTypeInput, handler: TriggerHandler<TConfig>) => TriggerTypeRef<TConfig>
-```
-
-#### Parameters
-
-| Name | Type | Required | Description |
-| --- | --- | --- | --- |
-| `triggerType` | [`RegisterTriggerTypeInput`](#registertriggertypeinput) | Yes | The trigger type to register |
-| `handler` | [`TriggerHandler`](#triggerhandler)&lt;TConfig&gt; | Yes | The handler for the trigger type |
-
-#### Example
-
-```typescript
-type CronConfig = { expression: string }
-
-iii.registerTriggerType<CronConfig>(
-  { id: 'cron', description: 'Fires on a cron schedule' },
-  {
-    async registerTrigger({ id, function_id, config }) {
-      startCronJob(id, config.expression, () =>
-        iii.trigger({ function_id, payload: {} }),
-      )
-    },
-    async unregisterTrigger({ id }) {
-      stopCronJob(id)
-    },
-  },
-)
-```
-
-### shutdown
-
-Gracefully shutdown the iii, cleaning up all resources.
-
-**Signature**
-
-```typescript
-shutdown() => Promise<void>
-```
-
-#### Example
-
-```typescript
-await iii.shutdown()
 ```
 
 ### trigger
@@ -226,6 +144,43 @@ const receipt = await iii.trigger({
 })
 ```
 
+### registerTriggerType
+
+Registers a new trigger type. A trigger type is a way to invoke a function when a certain event occurs.
+
+**Signature**
+
+```typescript
+registerTriggerType(triggerType: RegisterTriggerTypeInput, handler: TriggerHandler<TConfig>) => TriggerTypeRef<TConfig>
+```
+
+#### Parameters
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `triggerType` | [`RegisterTriggerTypeInput`](#registertriggertypeinput) | Yes | The trigger type to register |
+| `handler` | [`TriggerHandler`](#triggerhandler)&lt;TConfig&gt; | Yes | The handler for the trigger type |
+
+#### Example
+
+```typescript
+type CronConfig = { expression: string }
+
+iii.registerTriggerType<CronConfig>(
+  { id: 'cron', description: 'Fires on a cron schedule' },
+  {
+    async registerTrigger({ id, function_id, config }) {
+      startCronJob(id, config.expression, () =>
+        iii.trigger({ function_id, payload: {} }),
+      )
+    },
+    async unregisterTrigger({ id }) {
+      stopCronJob(id)
+    },
+  },
+)
+```
+
 ### unregisterTriggerType
 
 Unregisters a trigger type.
@@ -246,6 +201,51 @@ unregisterTriggerType(triggerType: RegisterTriggerTypeInput) => void
 
 ```typescript
 iii.unregisterTriggerType({ id: 'cron', description: 'Fires on a cron schedule' })
+```
+
+### addConnectionStateListener
+
+Subscribe to connection-state transitions. The handler is fired immediately
+with the current state, then on every transition. Multiple listeners are
+supported. Returns an unsubscribe function.
+
+**Signature**
+
+```typescript
+addConnectionStateListener(handler: (state: IIIConnectionState) => void) => () => void
+```
+
+#### Parameters
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `handler` | (state: [`IIIConnectionState`](#iiiconnectionstate)) =&gt; void | Yes | - |
+
+#### Example
+
+```typescript
+const unsub = iii.addConnectionStateListener((state) => {
+  console.log('connection state:', state)
+})
+
+// Later, stop receiving updates
+unsub()
+```
+
+### shutdown
+
+Gracefully shutdown the iii, cleaning up all resources.
+
+**Signature**
+
+```typescript
+shutdown() => Promise<void>
+```
+
+#### Example
+
+```typescript
+await iii.shutdown()
 ```
 
 ## Subpath Exports

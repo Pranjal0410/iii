@@ -41,6 +41,22 @@ iii = register_worker('ws://localhost:49134', InitOptions(worker_name='my-worker
 
 ## Methods
 
+### register_trigger
+
+
+
+**Signature**
+
+```python
+register_trigger(trigger: RegisterTriggerInput | dict[str, Any])
+```
+
+#### Parameters
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `trigger` | [`RegisterTriggerInput`](#registertriggerinput) \| dict[str, Any] | Yes | - |
+
 ### register_function
 
 
@@ -58,21 +74,21 @@ register_function(function_id: str, handler_or_invocation: RemoteFunctionHandler
 | `function_id` | `str` | Yes | - |
 | `handler_or_invocation` | `RemoteFunctionHandler \| HttpInvocationConfig` | Yes | - |
 
-### register_trigger
+### trigger
 
 
 
 **Signature**
 
 ```python
-register_trigger(trigger: RegisterTriggerInput | dict[str, Any])
+trigger(request: dict[str, Any] | TriggerRequest)
 ```
 
 #### Parameters
 
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
-| `trigger` | [`RegisterTriggerInput`](#registertriggerinput) \| dict[str, Any] | Yes | - |
+| `request` | dict[str, Any] \| [`TriggerRequest`](#triggerrequest) | Yes | - |
 
 ### register_trigger_type
 
@@ -91,32 +107,6 @@ register_trigger_type(trigger_type: RegisterTriggerTypeInput | dict[str, Any], h
 | `trigger_type` | [`RegisterTriggerTypeInput`](#registertriggertypeinput) \| dict[str, Any] | Yes | - |
 | `handler` | [`TriggerHandler`](#triggerhandler)[Any] | Yes | - |
 
-### shutdown
-
-
-
-**Signature**
-
-```python
-shutdown()
-```
-
-### trigger
-
-
-
-**Signature**
-
-```python
-trigger(request: dict[str, Any] | TriggerRequest)
-```
-
-#### Parameters
-
-| Name | Type | Required | Description |
-| --- | --- | --- | --- |
-| `request` | dict[str, Any] \| [`TriggerRequest`](#triggerrequest) | Yes | - |
-
 ### unregister_trigger_type
 
 
@@ -132,6 +122,16 @@ unregister_trigger_type(trigger_type: RegisterTriggerTypeInput | dict[str, Any])
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
 | `trigger_type` | [`RegisterTriggerTypeInput`](#registertriggertypeinput) \| dict[str, Any] | Yes | - |
+
+### shutdown
+
+
+
+**Signature**
+
+```python
+shutdown()
+```
 
 ## Types
 

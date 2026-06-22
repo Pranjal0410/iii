@@ -7,6 +7,21 @@ const LANG_MAP: Record<string, string> = {
   rust: 'rust',
 }
 
+// Canonical ordering for the core worker-handle methods in the generated docs.
+// Matched case-insensitively and ignoring underscores so one list covers both
+// camelCase (Node/Browser) and snake_case (Python/Rust). Methods not listed here
+// keep their existing alphabetical order and sort after these.
+const METHOD_ORDER = ['registertrigger', 'registerfunction', 'trigger', 'registertriggertype', 'unregistertriggertype']
+
+function methodRank(name: string): number {
+  const i = METHOD_ORDER.indexOf(name.toLowerCase().replace(/_/g, ''))
+  return i === -1 ? METHOD_ORDER.length : i
+}
+
+function orderMethods(methods: FunctionDoc[]): FunctionDoc[] {
+  return [...methods].sort((a, b) => methodRank(a.name) - methodRank(b.name) || a.name.localeCompare(b.name))
+}
+
 function escapeMdxText(value: string): string {
   return value.replace(/`[^`]*`|[{}]/g, (match) => {
     if (match.startsWith('`')) return match
@@ -170,7 +185,7 @@ export function renderSdkMdx(doc: SdkDoc): string {
   if (doc.methods.length > 0) {
     lines.push('## Methods')
     lines.push('')
-    for (const method of doc.methods) {
+    for (const method of orderMethods(doc.methods)) {
       lines.push(renderMethod(method, lang, knownTypes))
     }
   }
