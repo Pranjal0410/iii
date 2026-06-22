@@ -17,6 +17,8 @@ interface GenerationTarget {
   jsonPath: string
   outputPath: string
   parser: (jsonPath: string) => SdkDoc
+  /** SDK source dir whose doc-comments produce this page's prose. */
+  sourcePath: string
 }
 
 const targets: GenerationTarget[] = [
@@ -26,24 +28,28 @@ const targets: GenerationTarget[] = [
     jsonPath: resolve(ROOT, 'sdk/packages/node/iii/api-docs.json'),
     outputPath: resolve(DOCS_OUTPUT, 'sdk-node.mdx'),
     parser: parseNodeTypedoc,
+    sourcePath: 'sdk/packages/node/iii/src',
   },
   {
     name: 'Python SDK',
     jsonPath: resolve(ROOT, 'sdk/packages/python/iii/api-docs.json'),
     outputPath: resolve(DOCS_OUTPUT, 'sdk-python.mdx'),
     parser: parseGriffe,
+    sourcePath: 'sdk/packages/python/iii/src',
   },
   {
     name: 'Rust SDK',
     jsonPath: resolve(ROOT, 'target/doc/iii_sdk.json'),
     outputPath: resolve(DOCS_OUTPUT, 'sdk-rust.mdx'),
     parser: parseRustdoc,
+    sourcePath: 'sdk/packages/rust/iii/src',
   },
   {
     name: 'Browser SDK',
     jsonPath: resolve(ROOT, 'sdk/packages/node/iii-browser/api-docs.json'),
     outputPath: resolve(DOCS_OUTPUT, 'sdk-browser.mdx'),
     parser: parseBrowserTypedoc,
+    sourcePath: 'sdk/packages/node/iii-browser/src',
   },
   // ── @iii-dev/helpers / iii-helpers (library: per-submodule) ──
   {
@@ -51,18 +57,21 @@ const targets: GenerationTarget[] = [
     jsonPath: resolve(ROOT, 'sdk/packages/node/helpers/api-docs.json'),
     outputPath: resolve(DOCS_OUTPUT, 'helpers-node.mdx'),
     parser: parseHelpersTypedoc,
+    sourcePath: 'sdk/packages/node/helpers/src',
   },
   {
     name: 'Helpers (Python)',
     jsonPath: resolve(ROOT, 'sdk/packages/python/helpers/api-docs.json'),
     outputPath: resolve(DOCS_OUTPUT, 'helpers-python.mdx'),
     parser: parseHelpersGriffe,
+    sourcePath: 'sdk/packages/python/helpers/src',
   },
   {
     name: 'Helpers (Rust)',
     jsonPath: resolve(ROOT, 'target/doc/iii_helpers.json'),
     outputPath: resolve(DOCS_OUTPUT, 'helpers-rust.mdx'),
     parser: parseHelpersRustdoc,
+    sourcePath: 'sdk/packages/rust/helpers/src',
   },
 ]
 
@@ -81,6 +90,7 @@ for (const target of targets) {
 
   try {
     const doc = target.parser(target.jsonPath)
+    doc.metadata.docSourcePath = target.sourcePath
     const mdx = renderSdkMdx(doc)
     writeFileSync(target.outputPath, mdx, 'utf-8')
     const counts = doc.isLibrary

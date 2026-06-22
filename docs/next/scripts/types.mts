@@ -67,6 +67,8 @@ export interface SdkDoc {
     importExample: string
     /** Package name used to build subpath-export rows (e.g. `iii-sdk`). */
     packageName?: string
+    /** SDK source dir the doc-comments come from; named in the do-not-edit banner. */
+    docSourcePath?: string
   }
   /**
    * When true the page is rendered in "library" mode: no Initialization /

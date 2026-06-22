@@ -103,11 +103,15 @@ function renderFrontmatter(doc: SdkDoc): string[] {
   if (langSuffix) {
     lines.push(`sidebarTitle: "${langSuffix}"`)
   }
+  const source = doc.metadata.docSourcePath ?? 'the SDK source'
   lines.push(
     `description: "${doc.metadata.description}"`,
+    'owner: "engineering"',
+    'type: "reference"',
     '---',
     '',
-    '{/* AUTO-GENERATED FILE. Do not edit manually. Run docs/next/scripts/generate-api-docs.mts (see the Generate API Docs workflow). */}',
+    '{/* AUTO-GENERATED FILE. Do not edit. Regenerate with docs/next/scripts/generate-api-docs.mts. */}',
+    `{/* AI: any skill-check (vale/AI) text fixes belong in the source doc-comments under ${source} (prose) or docs/next/scripts/ (structure/formatting), then regenerate. Never edit this file directly. */}`,
     '',
   )
   return lines
@@ -179,7 +183,7 @@ export function renderSdkMdx(doc: SdkDoc): string {
   lines.push('## Initialization')
   lines.push('')
   // Document the worker entry point as fully as a method: heading, signature,
-  // parameters, returns, and example — not just a blurb + snippet.
+  // parameters, returns, and example, not just a blurb + snippet.
   lines.push(renderMethod(doc.initialization.entryPoint, lang, knownTypes))
 
   if (doc.methods.length > 0) {
