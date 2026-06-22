@@ -1,12 +1,12 @@
 /**
- * Typed error surfaced when an invocation dispatched over the SDK fails — RBAC
+ * Typed error surfaced when an invocation dispatched over the SDK fails, RBAC
  * rejection (FORBIDDEN), handler-level failure, or a timeout waiting for the
  * engine to respond. Wraps the wire `ErrorBody` shape plus the `function_id`
  * that was targeted, so callers get a single error type across all failure
  * modes and can disambiguate via `err.code`.
  *
  * Before this existed, rejection values were plain `ErrorBody`-shaped objects,
- * which printed as `[object Object]` when stringified — leaving developers to
+ * which printed as `[object Object]` when stringified, leaving developers to
  * grep through SDK source to figure out what tripped. The class name, `code`
  * prefix in the message, and `function_id` field together make a rejection
  * self-describing.

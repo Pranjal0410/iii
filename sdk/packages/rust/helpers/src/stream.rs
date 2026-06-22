@@ -22,13 +22,13 @@ use serde_json::Value;
 ///   single literal key named `"a.b"`.
 ///
 /// **Variant ordering is load-bearing.** `#[serde(untagged)]` tries
-/// variants in declaration order — `Single` MUST come before
+/// variants in declaration order, `Single` MUST come before
 /// `Segments` so a JSON string deserializes into `Single` rather than
 /// failing the array match first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 // VARIANT-ORDER-LOAD-BEARING: `Single` MUST precede `Segments` for serde
 // untagged deserialization to route bare strings to `MergePath::Single`.
-// Reordering breaks wire compatibility — string payloads would deserialize
+// Reordering breaks wire compatibility, string payloads would deserialize
 // as one-element `Segments`. Locked by `merge_path_single_variant_deserializes_string_first`.
 #[serde(untagged)]
 pub enum MergePath {

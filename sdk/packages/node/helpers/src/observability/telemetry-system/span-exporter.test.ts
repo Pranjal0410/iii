@@ -44,7 +44,7 @@ describe('EngineSpanExporter shutdown behavior', () => {
     const connection = new SharedEngineConnection('ws://127.0.0.1:9', {})
     const exporter = new EngineSpanExporter(connection)
 
-    // Export queued before shutdown — callback still pending.
+    // Export queued before shutdown, callback still pending.
     const callback = vi.fn()
     exporter.export([], callback)
     expect(callback).not.toHaveBeenCalled()

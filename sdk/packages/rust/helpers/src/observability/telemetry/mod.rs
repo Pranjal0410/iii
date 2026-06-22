@@ -217,7 +217,7 @@ pub async fn init_otel(config: OtelConfig) -> bool {
     // service.name resolution order (highest priority first):
     //   1. explicit `OtelConfig::service_name`
     //   2. `OTEL_SERVICE_NAME` env var
-    //   3. argv[0] basename — the binary's own filename
+    //   3. argv[0] basename, the binary's own filename
     //      (`harness`, `turn-orchestrator`, `provider-anthropic`, ...).
     //      We deliberately DON'T fall back to `detect_project_name`
     //      (Cargo.toml-from-cwd) here because shared-cwd spawning
@@ -294,7 +294,7 @@ pub async fn init_otel(config: OtelConfig) -> bool {
 
     // Without an explicit scheduled delay, the batch span processor inherits the
     // OpenTelemetry default of ~5000ms, so an ended span sits in the buffer up to
-    // 5s before reaching the engine — the dominant reason traces appear seconds
+    // 5s before reaching the engine, the dominant reason traces appear seconds
     // late. Mirror the logs path: resolve config > custom env var > 100ms default.
     let spans_flush_ms = config
         .spans_flush_interval_ms
@@ -570,7 +570,7 @@ where
 
 /// Run a future inside a new span. Returns the future's output unchanged.
 ///
-/// Does NOT set span status automatically — use [`with_span`] for
+/// Does NOT set span status automatically, use [`with_span`] for
 /// automatic OK/Error status on `Result` returns, or call
 /// [`set_current_span_error`] from inside `f` to mark errors on typed
 /// `thiserror` paths.
