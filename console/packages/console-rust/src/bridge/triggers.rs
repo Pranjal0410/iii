@@ -9,6 +9,11 @@ pub fn register_triggers(bridge: &IIIClient) -> Result<(), Error> {
         ("engine::console::status", "_console/status", "GET"),
         ("engine::console::health", "_console/health", "GET"),
         ("engine::console::functions", "_console/functions", "GET"),
+        (
+            "engine::console::function_detail",
+            "_console/functions/:function_id",
+            "GET",
+        ),
         ("engine::console::triggers", "_console/triggers", "GET"),
         (
             "engine::console::trigger_types",
