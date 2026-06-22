@@ -117,7 +117,7 @@ def init_otel(
     provider.add_span_processor(BaggageSpanProcessor())
     # Without an explicit schedule_delay_millis, BatchSpanProcessor inherits the
     # OpenTelemetry default of 5000ms, so an ended span sits in the buffer up to
-    # 5s before reaching the engine — the dominant reason traces appear seconds
+    # 5s before reaching the engine, the dominant reason traces appear seconds
     # late. Mirror the logs path with a small flush delay.
     spans_flush_interval_ms = _resolve_int(
         cfg.spans_flush_interval_ms,
@@ -245,7 +245,7 @@ _original_opener_open: Any = None
 def _enable_fetch_instrumentation() -> None:
     """Patch urllib.request.OpenerDirector.open to create OTel CLIENT spans.
 
-    Custom instrumentation matching the Node.js SDK's patchGlobalFetch —
+    Custom instrumentation matching the Node.js SDK's patchGlobalFetch,
     uses new OTel semantic conventions and adds rich attributes (server.address,
     url.scheme, url.path, http.response.status_code, etc.).
     """

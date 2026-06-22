@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn truncation_respects_max_bytes_below_marker_length() {
         // When max_bytes < TRUNCATION_MARKER.len(), the truncated marker
-        // itself must be capped — otherwise the output exceeds the cap.
+        // itself must be capped, otherwise the output exceeds the cap.
         let input = json!({ "blob": "x".repeat(100) });
         for max in 1..TRUNCATION_MARKER.len() {
             let (out, truncated) = redact_and_truncate(&input, Some(max));

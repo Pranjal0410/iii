@@ -465,7 +465,7 @@ class Sdk implements IIIClient {
     const { function_id, payload, action, timeoutMs } = request
     const effectiveTimeout = timeoutMs ?? this.invocationTimeoutMs
 
-    // Void is fire-and-forget — no invocation_id, no response
+    // Void is fire-and-forget, no invocation_id, no response
     if (action?.type === 'void') {
       const traceparent = injectTraceparent()
       const baggage = injectBaggage()
@@ -591,7 +591,7 @@ class Sdk implements IIIClient {
     this.invocations.clear()
 
     // Close WebSocket. Swallow any close-time errors (most commonly
-    // "WebSocket was closed before the connection was established" —
+    // "WebSocket was closed before the connection was established",
     // emitted when `close()` fires while still in CONNECTING state
     // and there's no error listener). Without a catch-all listener,
     // that event becomes an unhandled exception because we remove
@@ -602,7 +602,7 @@ class Sdk implements IIIClient {
       try {
         this.ws.close()
       } catch {
-        // ignore — shutting down anyway
+        // ignore, shutting down anyway
       }
       this.ws = undefined
     }

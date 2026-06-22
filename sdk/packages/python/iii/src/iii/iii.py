@@ -83,7 +83,7 @@ def _detect_project_name(cwd: str | None = None) -> str | None:
     when both signals are unavailable (e.g. cwd is the filesystem root, or
     the Python runtime has no TOML parser and no readable cwd basename).
 
-    No directory walking — only inspects ``cwd`` itself, so the SDK never
+    No directory walking, only inspects ``cwd`` itself, so the SDK never
     reads files outside the user's explicit working directory.
     """
     try:

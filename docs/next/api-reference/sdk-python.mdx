@@ -366,7 +366,7 @@ Format definition for function parameters.
 
 #### RegisterFunctionInput
 
-Input for registering a function — matches Node.js RegisterFunctionInput.
+Input for registering a function, matches Node.js RegisterFunctionInput.
 
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -441,7 +441,7 @@ Request object for ``trigger()``.
 
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
-| `action` | [`TriggerActionEnqueue`](#triggeractionenqueue) \| [`TriggerActionVoid`](#triggeractionvoid) \| None | No | Routing action — ``None`` for sync, ``TriggerAction.Enqueue(...)`` for queue, ``TriggerAction.Void()`` for fire-and-forget. |
+| `action` | [`TriggerActionEnqueue`](#triggeractionenqueue) \| [`TriggerActionVoid`](#triggeractionvoid) \| None | No | Routing action, ``None`` for sync, ``TriggerAction.Enqueue(...)`` for queue, ``TriggerAction.Void()`` for fire-and-forget. |
 | `function_id` | `str` | No | ID of the function to invoke. |
 | `payload` | `Any` | No | Data to pass to the function. |
 | `timeout_ms` | `int \| None` | No | Override the default invocation timeout. |
@@ -465,8 +465,8 @@ Typed handle returned by :meth:`iii.III.register_trigger_type`.
 
 Type parameters:
 
-- ``C`` — configuration type for :meth:`register_trigger`
-- ``R`` — call-request type for :meth:`register_function`
+- ``C``: configuration type for :meth:`register_trigger`
+- ``R``: call-request type for :meth:`register_function`
 
 ### iii.state
 

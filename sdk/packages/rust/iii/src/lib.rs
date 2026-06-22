@@ -40,7 +40,7 @@ pub mod errors {
 // equivalent here. There is no `InternalHttpRequest` (the Rust SDK uses
 // `iii_helpers::http::HttpRequest`), and the stream result types
 // (`StreamSetResult`, `StreamUpdateResult`, `StreamDeleteResult`) live in `iii_helpers::stream`
-// and are consumed inside `stream_provider.rs` — they are not re-exported at
+// and are consumed inside `stream_provider.rs`, they are not re-exported at
 // the crate root. Grouping them here would re-surface clean-break helpers
 // types into the SDK, which the `compile_fail` doctests below deliberately
 // forbid. Hence the `internal` grouping is a no-op for Rust.
@@ -78,7 +78,7 @@ pub struct InitOptions {
 ///
 /// Call [`IIIClient::shutdown`] before the end of `main` to cleanly stop the
 /// connection and join the background thread. In Rust the process exits
-/// when `main` returns, terminating all threads — so `shutdown()` must be
+/// when `main` returns, terminating all threads, so `shutdown()` must be
 /// called while `main` is still running.
 ///
 /// # Arguments

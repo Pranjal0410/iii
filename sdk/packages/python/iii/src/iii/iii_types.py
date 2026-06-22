@@ -129,7 +129,7 @@ class RegisterFunctionFormat(BaseModel):
 
 
 class RegisterFunctionInput(BaseModel):
-    """Input for registering a function — matches Node.js RegisterFunctionInput.
+    """Input for registering a function, matches Node.js RegisterFunctionInput.
 
     Attributes:
         id: Unique function identifier.
@@ -220,7 +220,7 @@ class TriggerRequest(BaseModel):
     Attributes:
         function_id: ID of the function to invoke.
         payload: Data to pass to the function.
-        action: Routing action — ``None`` for sync, ``TriggerAction.Enqueue(...)``
+        action: Routing action, ``None`` for sync, ``TriggerAction.Enqueue(...)``
             for queue, ``TriggerAction.Void()`` for fire-and-forget.
         timeout_ms: Override the default invocation timeout.
     """

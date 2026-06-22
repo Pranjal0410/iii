@@ -24,7 +24,7 @@ tokio runtime.
 
 Call `IIIClient::shutdown` before the end of `main` to cleanly stop the
 connection and join the background thread. In Rust the process exits
-when `main` returns, terminating all threads — so `shutdown()` must be
+when `main` returns, terminating all threads, so `shutdown()` must be
 called while `main` is still running.
 
 **Signature**
@@ -98,8 +98,8 @@ register_function(id: impl Into<String>, registration: RegisterFunction) -> Func
 
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
-| `id` | `impl Into<String>` | Yes | Function identifier. |
-| `registration` | [`RegisterFunction`](#registerfunction) | Yes | Built via [`RegisterFunction::new`], [`RegisterFunction::new_async`], or [`RegisterFunction::http`]. Chain `.description(...)`, `.metadata(...)`, `.request_format(...)`, `.response_format(...)` as needed. |
+| `id` | `impl Into<String>` | Yes | - |
+| `registration` | [`RegisterFunction`](#registerfunction) | Yes | - |
 
 #### Example
 
@@ -131,7 +131,7 @@ Invoke a remote function.
 The routing behavior depends on the `action` field of the request:
 - No action: synchronous -- waits for the function to return.
 - `TriggerAction::Enqueue` - async via named queue.
-- `TriggerAction::Void` — fire-and-forget.
+- `TriggerAction::Void`: fire-and-forget.
 
 **Signature**
 
@@ -289,25 +289,25 @@ Configuration options passed to `register_worker`.
 Function registration builder.
 
 The function ID is supplied separately at registration time via
-`IIIClient::register_function` — `RegisterFunction` only carries the handler
+`IIIClient::register_function`, `RegisterFunction` only carries the handler
 and optional metadata.
 
 Constructors:
-- `RegisterFunction::new` — sync function. Accepts both typed handlers
+- `RegisterFunction::new`: sync function. Accepts both typed handlers
   (schemas auto-extracted via `schemars`) and `Fn(Value) -> Result<Value, Error>`
   closures (permissive `AnyValue` schema, since `Value: JsonSchema`).
-- `RegisterFunction::new_async` — async equivalent of `new`.
-- `RegisterFunction::new_async_with_bad_request` — typed async handler
+- `RegisterFunction::new_async`: async equivalent of `new`.
+- `RegisterFunction::new_async_with_bad_request`: typed async handler
   that routes payload-deserialization failures through a caller-supplied
   mapper instead of the SDK's generic `Error::Serde`.
-- `RegisterFunction::http` — function invoked over HTTP (Lambda,
+- `RegisterFunction::http`: function invoked over HTTP (Lambda,
   Cloudflare Workers, etc.).
 
 Builder methods (all consume `self`):
 - `description`
 - `metadata`
-- `request_format` — overrides any auto-extracted schema.
-- `response_format` — overrides any auto-extracted schema.
+- `request_format`: overrides any auto-extracted schema.
+- `response_format`: overrides any auto-extracted schema.
 
 #### RegisterTriggerType
 
@@ -723,8 +723,8 @@ Trigger information returned by `engine::triggers::list`
 Typed handle returned by `IIIClient::register_trigger_type`.
 
 Type parameters:
-- `C` — trigger registration type for `register_trigger`
-- `R` — call request type for `register_function`
+- `C`: trigger registration type for `register_trigger`
+- `R`: call request type for `register_function`
 
 #### WorkerInfo
 

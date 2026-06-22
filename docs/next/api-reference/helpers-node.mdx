@@ -583,7 +583,7 @@ Configuration for OpenTelemetry initialization.
 | `serviceName` | `string` | No | The service name to report. Defaults to OTEL_SERVICE_NAME or "iii-node". |
 | `serviceNamespace` | `string` | No | The service namespace to report. Defaults to SERVICE_NAMESPACE env var. |
 | `serviceVersion` | `string` | No | The service version to report. Defaults to SERVICE_VERSION env var or "unknown". |
-| `spansFlushIntervalMs` | `number` | No | Span processor flush delay in milliseconds. Defaults to 100ms. This is how<br />long an ended span waits in the batch buffer before it is flushed to the<br />engine — the OpenTelemetry default of 5000ms is what makes traces appear<br />seconds after the action. Env override: OTEL_SPANS_FLUSH_INTERVAL_MS. |
+| `spansFlushIntervalMs` | `number` | No | Span processor flush delay in milliseconds. Defaults to 100ms. This is how<br />long an ended span waits in the batch buffer before it is flushed to the<br />engine, the OpenTelemetry default of 5000ms is what makes traces appear<br />seconds after the action. Env override: OTEL_SPANS_FLUSH_INTERVAL_MS. |
 
 ### OtelLogEvent
 
@@ -949,7 +949,7 @@ Engine semantics:
   - Missing or non-object intermediates along the path are
     auto-replaced with `{}` so a stray `null` or scalar never
     blocks future merges.
-  - The merge is shallow at the target — top-level keys of `value`
+  - The merge is shallow at the target, top-level keys of `value`
     replace same-named keys; siblings are preserved.
   - Each path segment is a literal key. `["a.b"]` writes a single
     key named `"a.b"`, not `a → b`.

@@ -250,7 +250,7 @@ export type FunctionRef = {
  *   cronHandler,
  * )
  *
- * // Register a trigger — type is inferred as CronConfig
+ * // Register a trigger, type is inferred as CronConfig
  * cron.registerTrigger('my::fn', { expression: '0 *\/5 * * * * *' })
  *
  * // Register a function and bind a trigger in one call

@@ -56,8 +56,8 @@ class TriggerTypeRef(Generic[C, R]):
 
     Type parameters:
 
-    - ``C`` — configuration type for :meth:`register_trigger`
-    - ``R`` — call-request type for :meth:`register_function`
+    - ``C``: configuration type for :meth:`register_trigger`
+    - ``R``: call-request type for :meth:`register_function`
 
     Example::
 
