@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -78,6 +79,7 @@ const targets: GenerationTarget[] = [
 mkdirSync(DOCS_OUTPUT, { recursive: true })
 
 let hasErrors = false
+const generated: string[] = []
 
 for (const target of targets) {
   console.log(`\n[generate-api-docs] Processing ${target.name}...`)
@@ -93,6 +95,7 @@ for (const target of targets) {
     doc.metadata.docSourcePath = target.sourcePath
     const mdx = renderSdkMdx(doc)
     writeFileSync(target.outputPath, mdx, 'utf-8')
+    generated.push(target.outputPath)
     const counts = doc.isLibrary
       ? `Modules: ${doc.modules?.length ?? 0}, Types: ${(doc.modules ?? []).reduce((n, m) => n + m.types.length, 0)}`
       : `Methods: ${doc.methods.length}, Types: ${doc.types.length}`
@@ -100,6 +103,29 @@ for (const target of targets) {
   } catch (err) {
     console.error(`  [ERROR] Failed to generate ${target.name}:`, err)
     hasErrors = true
+  }
+}
+
+// Render the `<source>.skill.md` siblings for the pages we just generated, so
+// `iii-skill-check verify-rendered` stays clean without a separate build step.
+// Scoped to the generated files (rendering the whole docs root would touch
+// unrelated, out-of-scope pages). Uses the canonical `iii-skill-render` binary
+// so the output is byte-identical to what CI verifies.
+if (generated.length > 0) {
+  console.log('\n[generate-api-docs] Rendering skill siblings...')
+  for (const file of generated) {
+    const result = spawnSync('iii-skill-render', [file, '--write'], { encoding: 'utf-8' })
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+      console.warn('  [WARN] `iii-skill-render` not found on PATH; skipping skill-sibling render.')
+      console.warn('  Install it and re-run, or render manually: `iii-skill-render <file>.mdx --write`.')
+      break
+    }
+    if (result.status !== 0) {
+      console.error(`  [ERROR] iii-skill-render failed for ${file}:\n${result.stderr ?? ''}`)
+      hasErrors = true
+      continue
+    }
+    console.log(`  [OK] ${file}.skill.md`)
   }
 }
 
