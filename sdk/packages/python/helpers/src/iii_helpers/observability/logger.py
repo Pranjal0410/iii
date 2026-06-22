@@ -39,7 +39,7 @@ class Logger:
         >>> from iii import Logger
         >>> logger = Logger()
         >>>
-        >>> # Basic logging — trace context is injected automatically
+        >>> # Basic logging, trace context is injected automatically
         >>> logger.info('Worker connected')
         >>>
         >>> # Structured context for dashboards and alerting

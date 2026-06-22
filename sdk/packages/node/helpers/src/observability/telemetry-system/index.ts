@@ -127,7 +127,7 @@ export function initOtel(config: OtelConfig = {}): void {
   const spanExporter = new EngineSpanExporter(sharedConnection)
   // Without an explicit scheduledDelayMillis, BatchSpanProcessor inherits the
   // OpenTelemetry default of 5000ms, so an ended span sits in the buffer up to
-  // 5s before it is flushed to the engine — the dominant reason traces show up
+  // 5s before it is flushed to the engine, the dominant reason traces show up
   // seconds after the action that produced them. Mirror the logs path
   // (BatchLogRecordProcessor below) with a small flush delay. maxExportBatchSize
   // stays at the OTel default so a burst of spans from one turn still coalesces

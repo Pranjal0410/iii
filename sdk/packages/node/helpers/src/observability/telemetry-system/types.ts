@@ -63,7 +63,7 @@ export interface OtelConfig {
   /**
    * Span processor flush delay in milliseconds. Defaults to 100ms. This is how
    * long an ended span waits in the batch buffer before it is flushed to the
-   * engine — the OpenTelemetry default of 5000ms is what makes traces appear
+   * engine, the OpenTelemetry default of 5000ms is what makes traces appear
    * seconds after the action. Env override: OTEL_SPANS_FLUSH_INTERVAL_MS.
    */
   spansFlushIntervalMs?: number

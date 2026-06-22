@@ -8,7 +8,7 @@ import type { StreamChannelRef } from './iii-types'
  * back to the basename of `cwd`. Returns `undefined` only when both signals
  * are unavailable (e.g. cwd is the filesystem root).
  *
- * No directory walking — only inspects `cwd` itself, so the SDK never reads
+ * No directory walking, only inspects `cwd` itself, so the SDK never reads
  * files outside the user's explicit working directory.
  */
 export function detectProjectName(cwd: string = process.cwd()): string | undefined {

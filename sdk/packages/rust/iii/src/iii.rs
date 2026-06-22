@@ -155,8 +155,8 @@ impl<H: TriggerHandler, C, R> RegisterTriggerType<H, C, R> {
 /// Typed handle returned by [`IIIClient::register_trigger_type`].
 ///
 /// Type parameters:
-/// - `C` — trigger registration type for [`register_trigger`](Self::register_trigger)
-/// - `R` — call request type for [`register_function`](Self::register_function)
+/// - `C`: trigger registration type for [`register_trigger`](Self::register_trigger)
+/// - `R`: call request type for [`register_function`](Self::register_function)
 #[derive(Clone)]
 pub struct TriggerTypeRef<C = Value, R = Value> {
     iii: IIIClient,
@@ -217,7 +217,7 @@ where
     }
 }
 
-/// Telemetry metadata provided by the SDK to the engine.
+/// Worker metadata provided by the SDK to the engine.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelemetryOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -294,7 +294,7 @@ impl Default for WorkerMetadata {
 /// `cwd`; otherwise falls back to the basename of `cwd`. Returns `None`
 /// only when both signals are unavailable.
 ///
-/// No directory walking — only inspects `cwd` itself, so the SDK never
+/// No directory walking, only inspects `cwd` itself, so the SDK never
 /// reads files outside the user's explicit working directory.
 pub(crate) fn detect_project_name(cwd: Option<std::path::PathBuf>) -> Option<String> {
     let cwd = cwd.or_else(|| std::env::current_dir().ok())?;
@@ -406,11 +406,11 @@ pub trait IntoSyncHandler<Marker>: Send + Sync + 'static {
     }
 }
 
-// 1-arg sync — deserializes the entire JSON input as T.
+// 1-arg sync, deserializes the entire JSON input as T.
 //
 // Error type is fixed to [`Error`] (instead of generic `E: Display`) so
 // closures using bare `Ok(...)` infer cleanly without explicit error
-// annotations — required for ergonomic registration of `Fn(Value) -> ...`
+// annotations, required for ergonomic registration of `Fn(Value) -> ...`
 // handlers. Other error types convert via `From<E> for Error` (impls
 // for `String` / `&str` / `serde_json::Error` ship with the SDK).
 impl<F, T, R> IntoSyncHandler<(T, R)> for F
@@ -441,7 +441,7 @@ where
 }
 
 // =============================================================================
-// IntoAsyncHandler — async function schema-extraction trait
+// IntoAsyncHandler, async function schema-extraction trait
 // =============================================================================
 
 /// Helper trait used internally to convert an async function into a
@@ -459,7 +459,7 @@ pub trait IntoAsyncHandler<Marker>: Send + Sync + 'static {
 
 /// Build the dispatchable handler for a typed async function: deserialize
 /// the JSON input as `T`, run `f`, serialize the result. Deserialization
-/// failures map through `on_bad_request` — [`IntoAsyncHandler`] passes the
+/// failures map through `on_bad_request`, [`IntoAsyncHandler`] passes the
 /// default [`Error::Serde`] mapper,
 /// [`RegisterFunction::new_async_with_bad_request`] a caller-supplied one.
 fn async_handler_with<F, T, Fut, R>(
@@ -494,7 +494,7 @@ where
     )
 }
 
-// 1-arg async — deserializes the entire JSON input as T.
+// 1-arg async, deserializes the entire JSON input as T.
 //
 // Error type is fixed to [`Error`] (see [`IntoSyncHandler`] for the
 // rationale). Use `From<E> for Error` to lift custom error types,
@@ -520,7 +520,7 @@ where
 }
 
 // =============================================================================
-// RegisterFunction — single registration builder
+// RegisterFunction, single registration builder
 // =============================================================================
 
 fn empty_message() -> RegisterFunctionMessage {
@@ -537,25 +537,25 @@ fn empty_message() -> RegisterFunctionMessage {
 /// Function registration builder.
 ///
 /// The function ID is supplied separately at registration time via
-/// [`IIIClient::register_function`] — `RegisterFunction` only carries the handler
+/// [`IIIClient::register_function`], `RegisterFunction` only carries the handler
 /// and optional metadata.
 ///
 /// Constructors:
-/// - [`RegisterFunction::new`] — sync function. Accepts both typed handlers
+/// - [`RegisterFunction::new`]: sync function. Accepts both typed handlers
 ///   (schemas auto-extracted via `schemars`) and `Fn(Value) -> Result<Value, Error>`
 ///   closures (permissive `AnyValue` schema, since `Value: JsonSchema`).
-/// - [`RegisterFunction::new_async`] — async equivalent of `new`.
-/// - [`RegisterFunction::new_async_with_bad_request`] — typed async handler
+/// - [`RegisterFunction::new_async`]: async equivalent of `new`.
+/// - [`RegisterFunction::new_async_with_bad_request`]: typed async handler
 ///   that routes payload-deserialization failures through a caller-supplied
 ///   mapper instead of the SDK's generic [`Error::Serde`].
-/// - [`RegisterFunction::http`] — function invoked over HTTP (Lambda,
+/// - [`RegisterFunction::http`]: function invoked over HTTP (Lambda,
 ///   Cloudflare Workers, etc.).
 ///
 /// Builder methods (all consume `self`):
 /// - [`description`](Self::description)
 /// - [`metadata`](Self::metadata)
-/// - [`request_format`](Self::request_format) — overrides any auto-extracted schema.
-/// - [`response_format`](Self::response_format) — overrides any auto-extracted schema.
+/// - [`request_format`](Self::request_format): overrides any auto-extracted schema.
+/// - [`response_format`](Self::response_format): overrides any auto-extracted schema.
 pub struct RegisterFunction {
     message: RegisterFunctionMessage,
     handler: Option<RemoteFunctionHandler>,
@@ -601,7 +601,7 @@ impl RegisterFunction {
     /// SDK's generic [`Error::Serde`] (which the dispatch loop surfaces as
     /// `invocation_failed`). Lets a registration keep typed-handler schema
     /// extraction while owning its wire error contract for malformed
-    /// payloads — e.g. a stable error code plus a recovery hint.
+    /// payloads, e.g. a stable error code plus a recovery hint.
     pub fn new_async_with_bad_request<F, T, Fut, R>(
         f: F,
         on_bad_request: impl Fn(serde_json::Error) -> Error + Send + Sync + 'static,
@@ -792,7 +792,7 @@ impl IIIClient {
     /// Shutdown the III client and wait for the connection thread to finish.
     ///
     /// This stops the connection loop, sends a shutdown signal, and joins
-    /// the background connection thread. Telemetry is flushed inside the
+    /// the background connection thread. OpenTelemetry is flushed inside the
     /// connection thread before it exits.
     pub fn shutdown(&self) {
         self.inner.running.store(false, Ordering::SeqCst);
@@ -812,7 +812,7 @@ impl IIIClient {
     /// Unlike [`shutdown`](Self::shutdown), this method does **not** block
     /// to wait for `run_connection()` to finish, making it safe to call from
     /// an async context without stalling the executor.
-    /// `telemetry::shutdown_otel()` still runs inside the connection thread
+    /// The OpenTelemetry flush (`telemetry::shutdown_otel()`) still runs inside the connection thread
     /// after `run_connection()` returns, so it may not complete unless
     /// [`shutdown`](Self::shutdown) is used to join the thread.
     pub async fn shutdown_async(&self) {
@@ -864,8 +864,8 @@ impl IIIClient {
     /// `(id, registration)`.
     ///
     /// # Arguments
-    /// * `id` — Function identifier.
-    /// * `registration` — Built via [`RegisterFunction::new`],
+    /// * `id`: Function identifier.
+    /// * `registration`: Built via [`RegisterFunction::new`],
     ///   [`RegisterFunction::new_async`], or [`RegisterFunction::http`].
     ///   Chain `.description(...)`, `.metadata(...)`, `.request_format(...)`,
     ///   `.response_format(...)` as needed.
@@ -888,8 +888,8 @@ impl IIIClient {
     ///     Ok(Output { message: format!("Hello, {}!", input.name) })
     /// }
     ///
-    /// let iii = register_worker("ws://localhost:49134", InitOptions::default());
-    /// iii.register_function(
+    /// let worker = register_worker("ws://localhost:49134", InitOptions::default());
+    /// worker.register_function(
     ///     "greetings::greet",
     ///     RegisterFunction::new_async(greet).description("Greets a user"),
     /// );
@@ -899,8 +899,8 @@ impl IIIClient {
     /// ```rust,no_run
     /// # use iii_sdk::{register_worker, InitOptions, RegisterFunction};
     /// # use serde_json::{json, Value};
-    /// # let iii = register_worker("ws://localhost:49134", InitOptions::default());
-    /// iii.register_function(
+    /// # let worker = register_worker("ws://localhost:49134", InitOptions::default());
+    /// worker.register_function(
     ///     "debug::echo",
     ///     RegisterFunction::new_async(|input: Value| async move { Ok(json!({"echo": input})) }),
     /// );
@@ -911,7 +911,7 @@ impl IIIClient {
     /// # use iii_sdk::{register_worker, InitOptions, RegisterFunction};
     /// # use iii_helpers::http::{HttpInvocationConfig, HttpMethod};
     /// # use std::collections::HashMap;
-    /// # let iii = register_worker("ws://localhost:49134", InitOptions::default());
+    /// # let worker = register_worker("ws://localhost:49134", InitOptions::default());
     /// let config = HttpInvocationConfig {
     ///     url: "https://example.com/invoke".into(),
     ///     method: HttpMethod::Post,
@@ -919,7 +919,7 @@ impl IIIClient {
     ///     headers: HashMap::new(),
     ///     auth: None,
     /// };
-    /// iii.register_function("ext::lambda", RegisterFunction::http(config));
+    /// worker.register_function("ext::lambda", RegisterFunction::http(config));
     /// ```
     pub fn register_function(
         &self,
@@ -949,7 +949,7 @@ impl IIIClient {
     /// # #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)] struct MyConfig { url: String }
     /// # #[derive(serde::Deserialize, schemars::JsonSchema)] struct MyRequest { data: String }
     /// # let iii = IIIClient::new("ws://localhost:49134");
-    /// let my_trigger = iii.register_trigger_type(
+    /// let my_trigger = worker.register_trigger_type(
     ///     RegisterTriggerType::new("my-trigger", "My custom trigger", MyHandler)
     ///         .trigger_request_format::<MyConfig>()
     ///         .call_request_format::<MyRequest>(),
@@ -1013,7 +1013,7 @@ impl IIIClient {
     /// # use iii_sdk::protocol::RegisterTriggerInput;
     /// # use serde_json::json;
     /// # let iii = IIIClient::new("ws://localhost:49134");
-    /// let trigger = iii.register_trigger(RegisterTriggerInput {
+    /// let trigger = worker.register_trigger(RegisterTriggerInput {
     ///     trigger_type: "http".to_string(),
     ///     function_id: "greet".to_string(),
     ///     config: json!({ "api_path": "/greet", "http_method": "GET" }),
@@ -1059,7 +1059,7 @@ impl IIIClient {
     /// The routing behavior depends on the `action` field of the request:
     /// - No action: synchronous -- waits for the function to return.
     /// - [`TriggerAction::Enqueue`] - async via named queue.
-    /// - [`TriggerAction::Void`] — fire-and-forget.
+    /// - [`TriggerAction::Void`]: fire-and-forget.
     ///
     /// # Examples
     /// ```rust
@@ -1068,7 +1068,7 @@ impl IIIClient {
     /// # use serde_json::json;
     /// # async fn example(iii: &IIIClient) -> Result<(), iii_sdk::Error> {
     /// // Synchronous
-    /// let result = iii.trigger(TriggerRequest {
+    /// let result = worker.trigger(TriggerRequest {
     ///     function_id: "greet".to_string(),
     ///     payload: json!({"name": "World"}),
     ///     action: None,
@@ -1076,7 +1076,7 @@ impl IIIClient {
     /// }).await?;
     ///
     /// // Fire-and-forget
-    /// iii.trigger(TriggerRequest {
+    /// worker.trigger(TriggerRequest {
     ///     function_id: "notify".to_string(),
     ///     payload: json!({}),
     ///     action: Some(TriggerAction::Void),
@@ -1084,7 +1084,7 @@ impl IIIClient {
     /// }).await?;
     ///
     /// // Enqueue
-    /// let receipt = iii.trigger(TriggerRequest {
+    /// let receipt = worker.trigger(TriggerRequest {
     ///     function_id: "iii::durable::publish".to_string(),
     ///     payload: json!({"topic": "test"}),
     ///     action: Some(TriggerAction::Enqueue { queue: "test".to_string() }),
@@ -1101,7 +1101,7 @@ impl IIIClient {
         let req = request.into();
         let (tp, bg) = inject_trace_headers();
 
-        // Void is fire-and-forget — no invocation_id, no response
+        // Void is fire-and-forget, no invocation_id, no response
         if matches!(req.action, Some(TriggerAction::Void)) {
             self.send_message(Message::InvokeFunction {
                 invocation_id: None,
@@ -1369,7 +1369,7 @@ impl IIIClient {
     /// and pushing every other message onto `queue` for re-flushing.
     ///
     /// Returns `true` if a `Shutdown` signal was observed during the
-    /// drain — the caller should then stop the connection loop.
+    /// drain, the caller should then stop the connection loop.
     fn drain_pre_connect_duplicates(
         rx: &mut mpsc::UnboundedReceiver<Outbound>,
         queue: &mut Vec<Message>,
@@ -1740,7 +1740,7 @@ impl IIIClient {
                                 code,
                                 message,
                                 // `Remote` is a structured, expected error owned by
-                                // the handler — respect `stacktrace: None` instead of
+                                // the handler, respect `stacktrace: None` instead of
                                 // backfilling the dispatch-loop backtrace, which
                                 // points at the SDK event loop, not the error site.
                                 stacktrace,

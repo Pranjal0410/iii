@@ -73,7 +73,7 @@ class SharedEngineConnection:
         self._loop.call_soon_threadsafe(_try_put)
 
     async def _run(self) -> None:
-        """Main reconnect loop — runs as an asyncio Task."""
+        """Main reconnect loop, runs as an asyncio Task."""
         import websockets  # noqa: PLC0415
 
         delay = 1.0

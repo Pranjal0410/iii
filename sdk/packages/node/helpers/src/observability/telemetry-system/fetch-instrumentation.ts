@@ -27,7 +27,7 @@ let originalFetch: typeof globalThis.fetch | null = null
 
 /**
  * Substring patterns from `OTEL_FETCH_IGNORE_URLS` (comma-separated). A fetch
- * whose URL contains any pattern is executed WITHOUT creating a span — use it
+ * whose URL contains any pattern is executed WITHOUT creating a span, use it
  * to drop noisy/high-frequency calls (health checks, polling, internal
  * endpoints) that would otherwise flood traces.
  */
@@ -75,7 +75,7 @@ export function patchGlobalFetch(tracer: Tracer): void {
       port = parsed.port ? parseInt(parsed.port, 10) : undefined
       query = parsed.search ? parsed.search.slice(1) : undefined
     } catch {
-      // relative URL or invalid — skip host/scheme/path attributes
+      // relative URL or invalid, skip host/scheme/path attributes
     }
 
     const spanAttributes: Record<string, string | number> = {

@@ -29,7 +29,7 @@ pub async fn create_channel(iii: &IIIClient, buffer_size: Option<usize>) -> Resu
 ///
 /// Wires the 5 callable `stream::*` functions (`get`, `set`, `delete`, `list`,
 /// `list_groups`) on the engine through the supplied [`IStream`] implementor.
-/// `update` is **not** registered — atomic updates remain engine-side.
+/// `update` is **not** registered, atomic updates remain engine-side.
 pub fn create_stream<S>(iii: &IIIClient, stream_name: impl Into<String>, stream: S)
 where
     S: IStream,

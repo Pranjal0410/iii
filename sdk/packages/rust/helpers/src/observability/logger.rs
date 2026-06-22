@@ -48,7 +48,7 @@ fn json_value_to_anyvalue(v: &Value) -> AnyValue {
 ///
 /// let logger = Logger::new();
 ///
-/// // Basic logging — trace context is injected automatically
+/// // Basic logging, trace context is injected automatically
 /// logger.info("Worker connected", None);
 ///
 /// // Structured context for dashboards and alerting

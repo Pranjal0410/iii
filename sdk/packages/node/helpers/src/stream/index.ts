@@ -212,7 +212,7 @@ export type MergePath = string | string[]
  *   - Missing or non-object intermediates along the path are
  *     auto-replaced with `{}` so a stray `null` or scalar never
  *     blocks future merges.
- *   - The merge is shallow at the target — top-level keys of `value`
+ *   - The merge is shallow at the target, top-level keys of `value`
  *     replace same-named keys; siblings are preserved.
  *   - Each path segment is a literal key. `["a.b"]` writes a single
  *     key named `"a.b"`, not `a → b`.
