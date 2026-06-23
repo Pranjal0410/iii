@@ -251,7 +251,7 @@ The `iii-sdk` package provides additional entry points:
 | `iii-sdk/internal` | `InternalHttpRequest` |
 | `iii-sdk/protocol` | `ErrorBody`, `MessageType`, `RegisterFunctionFormat`, `RegisterFunctionInput`, `RegisterFunctionMessage`, `RegisterFunctionOptions`, `RegisterTriggerInput`, `RegisterTriggerMessage`, `RegisterTriggerTypeInput`, `RegisterTriggerTypeMessage`, etc. |
 | `iii-sdk/runtime` | `FunctionRef`, `IIIConnectionState`, `TriggerTypeRef` |
-| `iii-sdk/state` | `DeleteResult`, `IState`, `StateDeleteInput`, `StateDeleteResult`, `StateEventData`, `StateEventType`, `StateGetInput`, `StateListInput`, `StateSetInput`, `StateSetResult`, etc. |
+| `iii-sdk/state` | `IState`, `StateDeleteInput`, `StateDeleteResult`, `StateEventData`, `StateEventType`, `StateGetInput`, `StateListInput`, `StateSetInput`, `StateSetResult`, `StateUpdateInput`, etc. |
 | `iii-sdk/stream` | `IStream` |
 | `iii-sdk/trigger` | `Trigger`, `TriggerConfig`, `TriggerHandler` |
 
@@ -602,15 +602,7 @@ to this trigger type, so callers don't need to repeat the `type` field.
 
 ### iii-sdk/state
 
-[`DeleteResult`](#deleteresult) · [`IState`](#istate) · [`StateDeleteInput`](#statedeleteinput) · [`StateDeleteResult`](#statedeleteresult) · [`StateEventData`](#stateeventdata) · [`StateEventType`](#stateeventtype) · [`StateGetInput`](#stategetinput) · [`StateListInput`](#statelistinput) · [`StateSetInput`](#statesetinput) · [`StateSetResult`](#statesetresult) · [`StateUpdateInput`](#stateupdateinput) · [`StateUpdateResult`](#stateupdateresult)
-
-#### DeleteResult
-
-Result of a state delete operation.
-
-| Name | Type | Required | Description |
-| --- | --- | --- | --- |
-| `old_value` | `any` | No | Previous value (if it existed). |
+[`IState`](#istate) · [`StateDeleteInput`](#statedeleteinput) · [`StateDeleteResult`](#statedeleteresult) · [`StateEventData`](#stateeventdata) · [`StateEventType`](#stateeventtype) · [`StateGetInput`](#stategetinput) · [`StateListInput`](#statelistinput) · [`StateSetInput`](#statesetinput) · [`StateSetResult`](#statesetresult) · [`StateUpdateInput`](#stateupdateinput) · [`StateUpdateResult`](#stateupdateresult)
 
 #### IState
 
@@ -619,7 +611,7 @@ subpath export.
 
 | Name | Type | Required | Description |
 | --- | --- | --- | --- |
-| `delete` | Promise&lt;[`DeleteResult`](#deleteresult)&gt; | Yes | Delete a state value. |
+| `delete` | Promise&lt;[`StateDeleteResult`](#statedeleteresult)&gt; | Yes | Delete a state value. |
 | `get` | `Promise<TData \| null>` | Yes | Retrieve a value by scope and key. |
 | `list` | `Promise<TData[]>` | Yes | List all values in a scope. |
 | `set` | Promise&lt;[`StateSetResult`](#statesetresult)&lt;TData&gt; \| null&gt; | Yes | Set (create or overwrite) a state value. |
