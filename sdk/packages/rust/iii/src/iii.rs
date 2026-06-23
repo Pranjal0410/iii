@@ -949,7 +949,7 @@ impl IIIClient {
     /// # #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)] struct MyConfig { url: String }
     /// # #[derive(serde::Deserialize, schemars::JsonSchema)] struct MyRequest { data: String }
     /// # let iii = IIIClient::new("ws://localhost:49134");
-    /// let my_trigger = worker.register_trigger_type(
+    /// let my_trigger = iii.register_trigger_type(
     ///     RegisterTriggerType::new("my-trigger", "My custom trigger", MyHandler)
     ///         .trigger_request_format::<MyConfig>()
     ///         .call_request_format::<MyRequest>(),
@@ -1013,7 +1013,7 @@ impl IIIClient {
     /// # use iii_sdk::protocol::RegisterTriggerInput;
     /// # use serde_json::json;
     /// # let iii = IIIClient::new("ws://localhost:49134");
-    /// let trigger = worker.register_trigger(RegisterTriggerInput {
+    /// let trigger = iii.register_trigger(RegisterTriggerInput {
     ///     trigger_type: "http".to_string(),
     ///     function_id: "greet".to_string(),
     ///     config: json!({ "api_path": "/greet", "http_method": "GET" }),
@@ -1068,7 +1068,7 @@ impl IIIClient {
     /// # use serde_json::json;
     /// # async fn example(iii: &IIIClient) -> Result<(), iii_sdk::Error> {
     /// // Synchronous
-    /// let result = worker.trigger(TriggerRequest {
+    /// let result = iii.trigger(TriggerRequest {
     ///     function_id: "greet".to_string(),
     ///     payload: json!({"name": "World"}),
     ///     action: None,
@@ -1076,7 +1076,7 @@ impl IIIClient {
     /// }).await?;
     ///
     /// // Fire-and-forget
-    /// worker.trigger(TriggerRequest {
+    /// iii.trigger(TriggerRequest {
     ///     function_id: "notify".to_string(),
     ///     payload: json!({}),
     ///     action: Some(TriggerAction::Void),
@@ -1084,7 +1084,7 @@ impl IIIClient {
     /// }).await?;
     ///
     /// // Enqueue
-    /// let receipt = worker.trigger(TriggerRequest {
+    /// let receipt = iii.trigger(TriggerRequest {
     ///     function_id: "iii::durable::publish".to_string(),
     ///     payload: json!({"topic": "test"}),
     ///     action: Some(TriggerAction::Enqueue { queue: "test".to_string() }),
