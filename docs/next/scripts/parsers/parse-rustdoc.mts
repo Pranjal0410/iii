@@ -379,11 +379,52 @@ function findItemByName(data: RustDocIndex, name: string, kind: string): RustDoc
   return undefined
 }
 
+/**
+ * Sibling project crates whose types the SDK re-exports at its root
+ * (`pub use iii_helpers::queue::EnqueueResult`). rustdoc leaves only a `use`
+ * stub in the SDK crate, so the definition is read from the helpers crate JSON
+ * and documented on the SDK page, matching the Node and Python SDK pages.
+ */
+const EXTERNAL_CRATES = ['iii_helpers']
+
+function collectReExportedTypes(
+  data: RustDocIndex,
+  helpersJsonPath: string | undefined,
+  exclude: Set<string>,
+): TypeDoc[] {
+  if (!helpersJsonPath) return []
+  let helpers: RustDocIndex
+  try {
+    helpers = JSON.parse(readFileSync(helpersJsonPath, 'utf-8'))
+  } catch {
+    return []
+  }
+  // Names this crate re-exports from an external project crate.
+  const names = new Set<string>()
+  for (const item of Object.values(data.index)) {
+    if (item.crate_id !== 0 || item.deprecation) continue
+    const use = item.inner?.use
+    if (!use?.name || !use?.source) continue
+    if (EXTERNAL_CRATES.some(c => use.source.startsWith(`${c}::`))) names.add(use.name)
+  }
+  const out: TypeDoc[] = []
+  for (const name of names) {
+    if (exclude.has(name)) continue
+    const def = Object.values(helpers.index).find(
+      it => it.crate_id === 0 && it.name === name && TYPE_KINDS.has(getItemKind(it)),
+    )
+    if (!def) continue
+    const t = itemToType(def, helpers.index)
+    if (t) out.push(t)
+  }
+  return out
+}
+
 // ---------------------------------------------------------------------------
 // Core SDK page (iii-sdk)
 // ---------------------------------------------------------------------------
 
-export function parseRustdoc(jsonPath: string): SdkDoc {
+export function parseRustdoc(jsonPath: string, helpersJsonPath?: string): SdkDoc {
   let data: RustDocIndex
   try {
     data = JSON.parse(readFileSync(jsonPath, 'utf-8'))
@@ -413,6 +454,13 @@ export function parseRustdoc(jsonPath: string): SdkDoc {
       facade.get(item.name ?? '') ?? (rootLevel || module === 'iii' ? PKG : `${PKG}::${module}`)
     if (!bySub.has(subpath)) bySub.set(subpath, [])
     bySub.get(subpath)!.push(t)
+  }
+  // Types re-exported from sibling crates (e.g. EnqueueResult) — root re-exports.
+  for (const t of collectReExportedTypes(data, helpersJsonPath, new Set([MAIN_STRUCT]))) {
+    if (types.some(x => x.name === t.name)) continue
+    types.push(t)
+    if (!bySub.has(PKG)) bySub.set(PKG, [])
+    bySub.get(PKG)!.push(t)
   }
   types.sort((a, b) => a.name.localeCompare(b.name))
   const typeGroups: TypeGroup[] = [...bySub.entries()].map(([subpath, ts]) => ({

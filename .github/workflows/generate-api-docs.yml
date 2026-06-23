@@ -71,7 +71,9 @@ jobs:
         working-directory: sdk/packages/python/iii
         run: |
           uv sync --extra dev
-          uv run --with griffe griffe dump iii -d google > api-docs.json
+          # Dump iii_helpers too so types the SDK re-exports from it (e.g.
+          # EnqueueResult) resolve and get documented on the SDK page.
+          uv run --with griffe griffe dump iii iii_helpers -d google > api-docs.json
       - name: Extract Python Helpers docs
         working-directory: sdk/packages/python/helpers
         run: |

@@ -138,7 +138,15 @@ shutdown()
 
 ### iii
 
-[`InitOptions`](#initoptions) · [`MiddlewareFunctionInput`](#middlewarefunctioninput) · [`StreamRequest`](#streamrequest) · [`StreamResponse`](#streamresponse) · [`TelemetryOptions`](#telemetryoptions) · [`TriggerAction`](#triggeraction) · [`TriggerActionEnqueue`](#triggeractionenqueue)
+[`EnqueueResult`](#enqueueresult) · [`InitOptions`](#initoptions) · [`MiddlewareFunctionInput`](#middlewarefunctioninput) · [`StreamRequest`](#streamrequest) · [`StreamResponse`](#streamresponse) · [`TelemetryOptions`](#telemetryoptions) · [`TriggerAction`](#triggeraction) · [`TriggerActionEnqueue`](#triggeractionenqueue)
+
+#### EnqueueResult
+
+Result returned when a function is invoked with ``TriggerAction.Enqueue``.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `messageReceiptId` | `str` | No | UUID assigned by the engine to the enqueued job. |
 
 #### InitOptions
 
@@ -579,11 +587,97 @@ Result of a state update operation.
 
 ### iii.stream
 
-[`IStream`](#istream)
+[`IStream`](#istream) · [`StreamDeleteInput`](#streamdeleteinput) · [`StreamDeleteResult`](#streamdeleteresult) · [`StreamGetInput`](#streamgetinput) · [`StreamListGroupsInput`](#streamlistgroupsinput) · [`StreamListInput`](#streamlistinput) · [`StreamSetInput`](#streamsetinput) · [`StreamSetResult`](#streamsetresult) · [`StreamUpdateInput`](#streamupdateinput) · [`StreamUpdateResult`](#streamupdateresult)
 
 #### IStream
 
 Abstract interface for stream operations.
+
+#### StreamDeleteInput
+
+Input for stream delete operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `group_id` | `str` | Yes | - |
+| `item_id` | `str` | Yes | - |
+| `stream_name` | `str` | Yes | - |
+
+#### StreamDeleteResult
+
+Result of stream delete operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `old_value` | `Any \| None` | No | - |
+
+#### StreamGetInput
+
+Input for stream get operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `group_id` | `str` | Yes | - |
+| `item_id` | `str` | Yes | - |
+| `stream_name` | `str` | Yes | - |
+
+#### StreamListGroupsInput
+
+Input for stream list groups operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `stream_name` | `str` | Yes | - |
+
+#### StreamListInput
+
+Input for stream list operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `group_id` | `str` | Yes | - |
+| `stream_name` | `str` | Yes | - |
+
+#### StreamSetInput
+
+Input for stream set operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `data` | `Any` | Yes | - |
+| `group_id` | `str` | Yes | - |
+| `item_id` | `str` | Yes | - |
+| `stream_name` | `str` | Yes | - |
+
+#### StreamSetResult
+
+Result of stream set operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `new_value` | `TData` | Yes | - |
+| `old_value` | `TData \| None` | No | - |
+
+#### StreamUpdateInput
+
+Input for stream update operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `group_id` | `str` | Yes | - |
+| `item_id` | `str` | Yes | - |
+| `ops` | `list['UpdateOp']` | Yes | - |
+| `stream_name` | `str` | Yes | - |
+
+#### StreamUpdateResult
+
+Result of stream update operation.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `errors` | `list[UpdateOpError]` | No | - |
+| `new_value` | `TData` | Yes | - |
+| `old_value` | `TData \| None` | No | - |
 
 ### iii.trigger
 

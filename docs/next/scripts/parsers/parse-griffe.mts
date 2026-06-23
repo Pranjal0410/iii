@@ -206,11 +206,25 @@ function resolve(obj: GriffeObject | undefined, index: Map<string, GriffeObject>
 
 const PUBLIC_SUBMODULES = ['channel', 'errors', 'trigger', 'runtime', 'engine', 'protocol', 'internal', 'utils', 'stream', 'state']
 
-/** Collect resolved public members of a module, keyed by exported name. */
+/** True if `path` belongs to one of our own packages (not typing.*, pydantic.*). */
+function isLocalPath(path: string | undefined, pkgs: string[]): boolean {
+  if (!path) return true
+  return pkgs.some(pkg => path === pkg || path.startsWith(`${pkg}.`))
+}
+
+/**
+ * Collect resolved public members of a module, keyed by exported name.
+ *
+ * `pkgs` lists the packages whose definitions count as part of the public
+ * surface. The core SDK page passes both `iii` and `iii_helpers` so that types
+ * the SDK re-exports from the helpers package (e.g. `EnqueueResult`) resolve and
+ * are documented, matching the Node SDK page. Symbols from third-party packages
+ * (typing, pydantic, ...) are still dropped.
+ */
 function collectResolved(
   moduleObj: GriffeObject | undefined,
   index: Map<string, GriffeObject>,
-  pkg: string,
+  pkgs: string[],
 ): Map<string, GriffeObject> {
   const out = new Map<string, GriffeObject>()
   if (!moduleObj?.members) return out
@@ -218,8 +232,7 @@ function collectResolved(
     if (name.startsWith('_')) continue
     const resolved = resolve(member, index)
     if (!resolved) continue
-    // Keep only definitions that live in this package (skip typing.* etc.).
-    if (resolved.path && !resolved.path.startsWith(`${pkg}.`) && resolved.path !== pkg) continue
+    if (!isLocalPath(resolved.path, pkgs)) continue
     out.set(name, resolved)
   }
   return out
@@ -233,6 +246,12 @@ export function parseGriffe(jsonPath: string): SdkDoc {
   const raw = JSON.parse(readFileSync(jsonPath, 'utf-8'))
   const root: GriffeObject = raw['iii'] ?? raw
   const index = buildIndex(root, 'iii')
+  // The dump also carries the `iii_helpers` package; index it so aliases the SDK
+  // re-exports from helpers (e.g. `EnqueueResult`) resolve to their definitions.
+  const helpersRoot: GriffeObject | undefined = raw['iii_helpers']
+  if (helpersRoot) {
+    for (const [path, obj] of buildIndex(helpersRoot, 'iii_helpers')) index.set(path, obj)
+  }
   const rootMembers = root.members ?? {}
 
   // Client + entry point (resolved through the root re-export aliases).
@@ -248,11 +267,13 @@ export function parseGriffe(jsonPath: string): SdkDoc {
 
   const registerWorker = resolve(rootMembers['register_worker'], index)
 
-  // Public type surface = root re-exports + public submodule members.
+  // Public type surface = root re-exports + public submodule members. Both our
+  // own package and the re-exported helpers types count.
+  const SDK_PKGS = ['iii', 'iii_helpers']
   const publicDefs = new Map<string, GriffeObject>()
-  for (const [name, obj] of collectResolved(root, index, 'iii')) publicDefs.set(name, obj)
+  for (const [name, obj] of collectResolved(root, index, SDK_PKGS)) publicDefs.set(name, obj)
   for (const sub of PUBLIC_SUBMODULES) {
-    for (const [name, obj] of collectResolved(rootMembers[sub], index, 'iii')) {
+    for (const [name, obj] of collectResolved(rootMembers[sub], index, SDK_PKGS)) {
       if (!publicDefs.has(name)) publicDefs.set(name, obj)
     }
   }
@@ -275,9 +296,9 @@ export function parseGriffe(jsonPath: string): SdkDoc {
     if (!home.has(name) && (obj.kind === 'class' || obj.kind === 'attribute')) home.set(name, subpath)
   }
   for (const sub of PUBLIC_SUBMODULES) {
-    for (const [name, obj] of collectResolved(rootMembers[sub], index, 'iii')) noteHome(name, obj, `iii.${sub}`)
+    for (const [name, obj] of collectResolved(rootMembers[sub], index, SDK_PKGS)) noteHome(name, obj, `iii.${sub}`)
   }
-  for (const [name, obj] of collectResolved(root, index, 'iii')) noteHome(name, obj, 'iii')
+  for (const [name, obj] of collectResolved(root, index, SDK_PKGS)) noteHome(name, obj, 'iii')
 
   const bySub = new Map<string, TypeDoc[]>()
   for (const t of types) {
@@ -340,7 +361,7 @@ export function parseHelpersGriffe(jsonPath: string): SdkDoc {
   const modules: ModuleDoc[] = []
   for (const [subName, subObj] of Object.entries(rootMembers)) {
     if (subObj.kind !== 'module' || subName.startsWith('_')) continue
-    const resolved = collectResolved(subObj, index, 'iii_helpers')
+    const resolved = collectResolved(subObj, index, ['iii_helpers'])
     const functions: FunctionDoc[] = []
     const types: TypeDoc[] = []
     for (const [name, obj] of resolved) {

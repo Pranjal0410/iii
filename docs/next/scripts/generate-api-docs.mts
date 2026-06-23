@@ -16,9 +16,11 @@ interface GenerationTarget {
   name: string
   jsonPath: string
   outputPath: string
-  parser: (jsonPath: string) => SdkDoc
+  parser: (jsonPath: string, helpersJsonPath?: string) => SdkDoc
   /** SDK source dir whose doc-comments produce this page's prose. */
   sourcePath: string
+  /** Helpers crate JSON, so types the SDK re-exports from it get documented. */
+  helpersJsonPath?: string
 }
 
 const targets: GenerationTarget[] = [
@@ -43,6 +45,7 @@ const targets: GenerationTarget[] = [
     outputPath: resolve(DOCS_OUTPUT, 'sdk-rust.mdx'),
     parser: parseRustdoc,
     sourcePath: 'sdk/packages/rust/iii/src',
+    helpersJsonPath: resolve(ROOT, 'target/doc/iii_helpers.json'),
   },
   {
     name: 'Browser SDK',
@@ -89,7 +92,7 @@ for (const target of targets) {
   }
 
   try {
-    const doc = target.parser(target.jsonPath)
+    const doc = target.parser(target.jsonPath, target.helpersJsonPath)
     doc.metadata.docSourcePath = target.sourcePath
     const mdx = renderSdkMdx(doc)
     writeFileSync(target.outputPath, mdx, 'utf-8')

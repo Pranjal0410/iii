@@ -270,7 +270,15 @@ async shutdown_async()
 
 ### iii_sdk
 
-[`InitOptions`](#initoptions) · [`RegisterFunction`](#registerfunction) · [`RegisterTriggerType`](#registertriggertype) · [`TelemetryOptions`](#telemetryoptions)
+[`EnqueueResult`](#enqueueresult) · [`InitOptions`](#initoptions) · [`RegisterFunction`](#registerfunction) · [`RegisterTriggerType`](#registertriggertype) · [`TelemetryOptions`](#telemetryoptions)
+
+#### EnqueueResult
+
+Result returned by the engine when a message is successfully enqueued.
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `message_receipt_id` | `String` | Yes | - |
 
 #### InitOptions
 
