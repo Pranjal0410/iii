@@ -33,7 +33,7 @@ use crate::{
     worker_connections::{RuntimeWorkerInfo, WorkerConnection, WorkerConnectionRegistry},
     workers::worker::rbac_session::Session,
     workers::{
-        engine_fn::TRIGGER_WORKERS_AVAILABLE,
+        engine_fn::{TRIGGER_WORKERS_AVAILABLE, trigger_proxy_fn_id},
         http_functions::HttpFunctionsWorker,
         worker::{WorkerManagerConfig, channels::ChannelManager, rbac_session},
     },
@@ -877,6 +877,9 @@ impl Engine {
                     .unregister_trigger(id.clone(), trigger_type.clone())
                     .await;
 
+                // Drop the derived subscription proxy, if any (no-op otherwise).
+                self.functions.remove(&trigger_proxy_fn_id(id));
+
                 Ok(())
             }
 
@@ -1704,7 +1707,20 @@ impl Engine {
             self.invocations.halt_invocation(invocation_id);
         }
 
+        // Collect this worker's trigger ids before GC so we can drop their
+        // derived subscription proxies — those are engine-owned functions, so
+        // `unregister_worker` (which only removes triggers) won't touch them.
+        let worker_trigger_ids: Vec<String> = self
+            .trigger_registry
+            .triggers
+            .iter()
+            .filter(|e| e.value().worker_id == Some(worker.id))
+            .map(|e| e.key().clone())
+            .collect();
         self.trigger_registry.unregister_worker(&worker.id).await;
+        for trigger_id in worker_trigger_ids {
+            self.functions.remove(&trigger_proxy_fn_id(&trigger_id));
+        }
         self.channel_manager.remove_channels_by_worker(&worker.id);
         self.worker_registry.unregister_worker(&worker.id);
 

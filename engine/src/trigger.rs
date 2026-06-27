@@ -329,11 +329,16 @@ impl TriggerRegistry {
         Ok(())
     }
 
+    /// Unregister a trigger by id. Idempotent: returns `Ok(false)` when no
+    /// trigger with this id exists (rather than erroring), so callers can treat
+    /// double-unregister as a no-op. On a registrator error the registry entry
+    /// is left in place (registry and registrator stay consistent) and the
+    /// error is propagated. Returns `Ok(true)` when a trigger was removed.
     pub async fn unregister_trigger(
         &self,
         id: String,
         trigger_type: Option<String>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<bool, anyhow::Error> {
         tracing::info!(
             "Unregistering trigger: {} of type: {}",
             id.purple(),
@@ -341,21 +346,18 @@ impl TriggerRegistry {
         );
 
         let Some(trigger_entry) = self.triggers.get(&id) else {
-            return Err(anyhow::anyhow!("Trigger not found"));
+            return Ok(false);
         };
         let trigger = trigger_entry.value().clone();
         drop(trigger_entry);
 
         if let Some(tt) = self.trigger_types.get(&trigger.trigger_type) {
-            let result: Result<(), anyhow::Error> =
-                tt.registrator.unregister_trigger(trigger.clone()).await;
-
-            result?
+            tt.registrator.unregister_trigger(trigger.clone()).await?;
         }
 
         self.triggers.remove(&id);
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -571,7 +573,7 @@ mod tests {
         let result = registry
             .unregister_trigger("t1".to_string(), Some("cron".to_string()))
             .await;
-        assert!(result.is_ok());
+        assert!(matches!(result, Ok(true)));
         assert!(registry.triggers.is_empty());
     }
 
@@ -581,8 +583,8 @@ mod tests {
         let result = registry
             .unregister_trigger("nonexistent".to_string(), None)
             .await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Trigger not found");
+        // Idempotent: unregistering an unknown id is a no-op, not an error.
+        assert!(matches!(result, Ok(false)));
     }
 
     #[tokio::test]

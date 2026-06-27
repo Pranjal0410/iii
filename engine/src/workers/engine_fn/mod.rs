@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::{
     engine::{Engine, EngineTrait, Handler, RegisterFunctionRequest, SessionHandler},
-    function::FunctionResult,
+    function::{Function, FunctionResult, HandlerFn},
     protocol::{ErrorBody, StreamChannelRef, WorkerMetrics},
     trigger::{Trigger, TriggerRegistrator, TriggerType, builtin_trigger_type_owner},
     worker_connections::{RuntimeWorkerInfo, WorkerConnection, WorkerConnectionTelemetryMeta},
@@ -25,6 +25,17 @@ use crate::{
 
 pub const TRIGGER_FUNCTIONS_AVAILABLE: &str = "engine::functions-available";
 pub const TRIGGER_WORKERS_AVAILABLE: &str = "engine::workers-available";
+
+/// Prefix for the internal proxy functions created by
+/// [`EngineFunctionsWorker::register_trigger`]. A subscription's proxy id is
+/// `{TRIGGER_PROXY_PREFIX}{trigger_id}` — derivable from the trigger id, so
+/// unregister and worker-disconnect GC need no lookup table.
+pub(crate) const TRIGGER_PROXY_PREFIX: &str = "engine::trigger-proxy::";
+
+/// The internal proxy function id for a given trigger id.
+pub(crate) fn trigger_proxy_fn_id(trigger_id: &str) -> String {
+    format!("{TRIGGER_PROXY_PREFIX}{trigger_id}")
+}
 
 /// Maximum length of `config_summary` strings produced by
 /// `engine::registered-triggers::list`.
@@ -363,6 +374,51 @@ pub struct RegisterWorkerInput {
     /// Isolation backend used to run the worker (e.g. `vm`, `oci`).
     #[serde(default)]
     pub isolation: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct RegisterTriggerInput {
+    /// Trigger type to bind (e.g. `cron`, `state`, `stream`, or a custom worker
+    /// trigger type).
+    pub trigger_type: String,
+    /// The real function the fire should be delivered to. The engine binds the
+    /// trigger to an internal proxy that forwards here with `metadata` merged
+    /// into the payload under `__metadata`.
+    pub function_id: String,
+    /// Trigger-type-specific configuration, passed through verbatim.
+    #[serde(default)]
+    pub config: Value,
+    /// Arbitrary metadata round-tripped into the fired payload under
+    /// `__metadata` so the (shared) target function can recover per-trigger
+    /// context the engine routing otherwise drops.
+    #[serde(default)]
+    pub metadata: Option<Value>,
+    /// Injected by the engine from the calling worker; scopes the trigger so it
+    /// is GC'd when that worker disconnects. Absent for in-process callers.
+    #[serde(rename = "_caller_worker_id", default)]
+    pub caller_worker_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RegisterTriggerResult {
+    /// The id of the registered trigger; pass to `engine::unregister_trigger`.
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct UnregisterTriggerInput {
+    /// The trigger id returned by `engine::register_trigger`.
+    pub id: String,
+    /// Optional trigger-type hint; accepted for symmetry with the protocol
+    /// message but not required for the registry lookup.
+    #[serde(default)]
+    pub trigger_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct UnregisterTriggerResult {
+    /// Whether a trigger with this id existed and was removed.
+    pub removed: bool,
 }
 
 // ── Worker ──────────────────────────────────────────────────────────────
@@ -1348,6 +1404,130 @@ impl EngineFunctionsWorker {
             .await;
 
         FunctionResult::Success(RegisterWorkerResult { success: true })
+    }
+
+    #[function(
+        id = "engine::register_trigger",
+        description = "Register a trigger whose fire is proxied to `function_id`, with `metadata` round-tripped into the payload under `__metadata`. Returns the trigger id (pass it to engine::unregister_trigger)."
+    )]
+    pub async fn register_trigger_fn(
+        &self,
+        input: RegisterTriggerInput,
+        session: Option<Arc<Session>>,
+    ) -> FunctionResult<RegisterTriggerResult, ErrorBody> {
+        // RBAC parity with the `Message::RegisterTrigger` path: honor the
+        // session's allowed_trigger_types when a session is present. (The
+        // on_trigger_registration hook is Message-path only and intentionally
+        // not replicated here — session-less local deployments bypass RBAC.)
+        if let Some(session) = &session
+            && let Some(allowed) = &session.allowed_trigger_types
+            && !allowed.iter().any(|t| t == &input.trigger_type)
+        {
+            return FunctionResult::Failure(ErrorBody {
+                code: "FORBIDDEN".into(),
+                message: format!(
+                    "Trigger type '{}' is not allowed for this session.",
+                    input.trigger_type
+                ),
+                stacktrace: None,
+            });
+        }
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let proxy_fn_id = trigger_proxy_fn_id(&id);
+
+        // Closure-backed proxy: merge the registration metadata into the fired
+        // payload under `__metadata`, then forward to the real target. This is
+        // why no trigger worker needs to change — the round-trip happens at the
+        // function-invocation layer, uniformly for every trigger type.
+        let engine = self.engine.clone();
+        let target = input.function_id.clone();
+        let metadata = input.metadata.clone();
+        let handler: Arc<HandlerFn> = Arc::new(move |_invocation_id, payload, _session| {
+            let engine = engine.clone();
+            let target = target.clone();
+            let metadata = metadata.clone();
+            Box::pin(async move {
+                let mut payload = payload;
+                if let (Some(obj), Some(meta)) = (payload.as_object_mut(), metadata.as_ref()) {
+                    obj.insert("__metadata".to_string(), meta.clone());
+                }
+                match engine.call(&target, payload).await {
+                    Ok(result) => FunctionResult::Success(result),
+                    Err(err) => FunctionResult::Failure(err),
+                }
+            })
+        });
+
+        self.engine.functions.register_function(
+            proxy_fn_id.clone(),
+            Function {
+                handler,
+                _function_id: proxy_fn_id.clone(),
+                _description: Some(format!("Subscription proxy for trigger {id}")),
+                request_format: None,
+                response_format: None,
+                metadata: Some(serde_json::json!({ "internal": true })),
+            },
+        );
+
+        let worker_id = input
+            .caller_worker_id
+            .as_deref()
+            .and_then(|w| uuid::Uuid::parse_str(w).ok());
+
+        let trigger = Trigger {
+            id: id.clone(),
+            trigger_type: input.trigger_type,
+            function_id: proxy_fn_id.clone(),
+            config: input.config,
+            worker_id,
+            metadata: input.metadata,
+        };
+
+        if let Err(err) = self.engine.trigger_registry.register_trigger(trigger).await {
+            // Roll back the proxy so a failed bind never leaks a function.
+            self.engine.functions.remove(&proxy_fn_id);
+            return FunctionResult::Failure(ErrorBody {
+                code: "trigger_registration_failed".into(),
+                message: err.to_string(),
+                stacktrace: None,
+            });
+        }
+
+        FunctionResult::Success(RegisterTriggerResult { id })
+    }
+
+    #[function(
+        id = "engine::unregister_trigger",
+        description = "Unregister a trigger by id and drop its subscription proxy. Idempotent; reports whether it existed."
+    )]
+    pub async fn unregister_trigger_fn(
+        &self,
+        input: UnregisterTriggerInput,
+    ) -> FunctionResult<UnregisterTriggerResult, ErrorBody> {
+        let removed = match self
+            .engine
+            .trigger_registry
+            .unregister_trigger(input.id.clone(), input.trigger_type)
+            .await
+        {
+            Ok(removed) => removed,
+            Err(err) => {
+                return FunctionResult::Failure(ErrorBody {
+                    code: "unregister_failed".into(),
+                    message: err.to_string(),
+                    stacktrace: None,
+                });
+            }
+        };
+
+        // Drop the derived proxy (no-op if this id was not a proxy trigger).
+        self.engine
+            .functions
+            .remove(&trigger_proxy_fn_id(&input.id));
+
+        FunctionResult::Success(UnregisterTriggerResult { removed })
     }
 }
 
@@ -3035,5 +3215,176 @@ mod tests {
     async fn destroy_returns_ok() {
         let (_engine, module) = setup_engine_and_module();
         module.destroy().await.unwrap();
+    }
+
+    // ── engine::register_trigger / engine::unregister_trigger ────────────
+
+    /// Registers `test-type` (with the module itself as registrator) so
+    /// `register_trigger_fn` can bind against it.
+    async fn register_test_trigger_type(engine: &Engine, module: &EngineFunctionsWorker) {
+        engine
+            .trigger_registry
+            .register_trigger_type(crate::trigger::TriggerType::new(
+                "test-type",
+                "Test trigger type",
+                Box::new(module.clone()),
+                None,
+            ))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn register_trigger_fn_binds_proxy_and_round_trips_metadata() {
+        let (engine, module) = setup_engine_and_module();
+        register_test_trigger_type(&engine, &module).await;
+
+        // Target function records the payload it receives.
+        let recorded: Arc<std::sync::Mutex<Option<Value>>> = Arc::new(std::sync::Mutex::new(None));
+        let recorded_clone = recorded.clone();
+        engine.register_function_handler(
+            crate::engine::RegisterFunctionRequest {
+                function_id: "test::target".to_string(),
+                description: None,
+                request_format: None,
+                response_format: None,
+                metadata: None,
+            },
+            crate::engine::Handler::new(move |input: Value| {
+                let recorded = recorded_clone.clone();
+                async move {
+                    *recorded.lock().unwrap() = Some(input);
+                    FunctionResult::Success(None)
+                }
+            }),
+        );
+
+        let wid = uuid::Uuid::new_v4();
+        let meta = serde_json::json!({ "session_id": "s_1", "subscription_id": "sub_1" });
+        let id = match module
+            .register_trigger_fn(
+                RegisterTriggerInput {
+                    trigger_type: "test-type".to_string(),
+                    function_id: "test::target".to_string(),
+                    config: serde_json::json!({}),
+                    metadata: Some(meta.clone()),
+                    caller_worker_id: Some(wid.to_string()),
+                },
+                None,
+            )
+            .await
+        {
+            FunctionResult::Success(r) => r.id,
+            _ => panic!("expected register success"),
+        };
+
+        let proxy_id = trigger_proxy_fn_id(&id);
+
+        // Proxy exists, is tagged internal, and the trigger binds to it with worker_id set.
+        let proxy = engine.functions.get(&proxy_id).expect("proxy registered");
+        assert_eq!(
+            proxy.metadata.as_ref().and_then(|m| m.get("internal")),
+            Some(&serde_json::json!(true))
+        );
+        let trig = engine
+            .trigger_registry
+            .triggers
+            .get(&id)
+            .expect("trigger registered");
+        assert_eq!(trig.function_id, proxy_id);
+        assert_eq!(trig.worker_id, Some(wid));
+
+        // Firing the proxy round-trips __metadata and preserves event fields.
+        let event = serde_json::json!({ "event_type": "set", "key": "k", "value": 1 });
+        engine.call(&proxy_id, event).await.expect("proxy call ok");
+        let got = recorded
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("target was invoked");
+        assert_eq!(got["__metadata"], meta);
+        assert_eq!(got["event_type"], "set");
+        assert_eq!(got["key"], "k");
+        assert_eq!(got["value"], 1);
+    }
+
+    #[tokio::test]
+    async fn unregister_trigger_fn_removes_both_and_is_idempotent() {
+        let (engine, module) = setup_engine_and_module();
+        register_test_trigger_type(&engine, &module).await;
+        register_simple_function(&engine, "test::target", None);
+
+        let id = match module
+            .register_trigger_fn(
+                RegisterTriggerInput {
+                    trigger_type: "test-type".to_string(),
+                    function_id: "test::target".to_string(),
+                    config: serde_json::json!({}),
+                    metadata: Some(serde_json::json!({ "session_id": "s" })),
+                    caller_worker_id: None,
+                },
+                None,
+            )
+            .await
+        {
+            FunctionResult::Success(r) => r.id,
+            _ => panic!("expected register success"),
+        };
+        let proxy_id = trigger_proxy_fn_id(&id);
+        assert!(engine.functions.get(&proxy_id).is_some());
+
+        // First unregister removes both the trigger and its proxy.
+        match module
+            .unregister_trigger_fn(UnregisterTriggerInput {
+                id: id.clone(),
+                trigger_type: None,
+            })
+            .await
+        {
+            FunctionResult::Success(r) => assert!(r.removed),
+            _ => panic!("expected unregister success"),
+        }
+        assert!(!engine.trigger_registry.triggers.contains_key(&id));
+        assert!(engine.functions.get(&proxy_id).is_none());
+
+        // Second unregister is a no-op reporting removed: false.
+        match module
+            .unregister_trigger_fn(UnregisterTriggerInput {
+                id,
+                trigger_type: None,
+            })
+            .await
+        {
+            FunctionResult::Success(r) => assert!(!r.removed),
+            _ => panic!("expected idempotent unregister success"),
+        }
+    }
+
+    #[tokio::test]
+    async fn register_trigger_fn_unknown_type_fails_and_rolls_back_proxy() {
+        let (engine, module) = setup_engine_and_module();
+        register_simple_function(&engine, "test::target", None);
+
+        let result = module
+            .register_trigger_fn(
+                RegisterTriggerInput {
+                    trigger_type: "no-such-type".to_string(),
+                    function_id: "test::target".to_string(),
+                    config: serde_json::json!({}),
+                    metadata: None,
+                    caller_worker_id: None,
+                },
+                None,
+            )
+            .await;
+        assert!(matches!(result, FunctionResult::Failure(_)));
+
+        // No orphaned proxy function should remain.
+        let leaked = engine
+            .functions
+            .functions
+            .iter()
+            .any(|e| e.key().starts_with(TRIGGER_PROXY_PREFIX));
+        assert!(!leaked, "failed bind must not leak a proxy function");
     }
 }
