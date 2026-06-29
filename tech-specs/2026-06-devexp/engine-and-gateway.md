@@ -1,10 +1,10 @@
 # Engine & the Baked-In WS Gateway
 
-This file specifies the **engine** in the overhauled architecture: how it boots from `worker-compose.yml`, how the WebSocket listener (the **`worker-gateway`**) becomes a first-class engine concept instead of a worker, and how the iii/worker registration protocol carries the correlation metadata that joins a process's identity to its connection's identity. The thesis is narrow and load-bearing: **the engine becomes a pure connection plane** — it binds the port, runs the protocol, holds the live-connection registry, and routes invocations. It never spawns a process, never resolves a version, never reads a worker script, never owns a PID, and **never authenticates or authorizes a caller** (access control is an out-of-process concern — see [§7](#7-access-control-lives-outside-the-engine)).
+This file specifies the **engine** in the overhauled architecture: how it boots from `worker-compose.yaml`, how the WebSocket listener (the **`worker-gateway`**) becomes a first-class engine concept instead of a worker, and how the iii/worker registration protocol carries the correlation metadata that joins a process's identity to its connection's identity. The thesis is narrow and load-bearing: **the engine is a pure connection plane that manages nothing.** It binds the port, runs the protocol, holds the live-connection registry, routes invocations, and **reports what is available**. It never spawns a process, never resolves a version, never reads a worker script, never owns a PID, **never manages or supervises a worker lifecycle**, and **never authenticates or authorizes a caller** (access control is an out-of-process concern, see [§7](#7-access-control-lives-outside-the-engine)). Whatever process ran `iii worker compose up` (the runner) supervises the workers it started; the engine only reports which workers are reachable (via the **`worker_available`** trigger, [§5.5](#55-the-worker_available-trigger-reporting-not-managing)).
 
 The single most important new section here is [§8 The Hot-Reload Drain Protocol](#8-the-hot-reload-drain-protocol) — without it, every config edit silently drops in-flight requests.
 
-Cross-links: process ownership and reaping live in [process-daemon.md](process-daemon.md); compose semantics, topo-sort, and the `compose::*`/`worker::*` functions live in [cli-and-functions.md](cli-and-functions.md); the compose file schema is in [worker-compose.md](worker-compose.md); the boot-read-off-disk bootstrap floor and the `configuration` store are in [configuration-and-bootstrap.md](configuration-and-bootstrap.md); phasing and the cloud cutover are in [migration.md](migration.md).
+Cross-links: process ownership and reaping live in [process-daemon.md](process-daemon.md); compose semantics, topo-sort, and the `compose::*`/`worker::*` functions live in [cli-and-functions.md](cli-and-functions.md); the compose file schema is in [worker-compose.md](worker-compose.md); the bootstrap floor (now `port`-only) and the optional `configuration` worker (a read/update layer over the active compose file) are in [configuration-and-bootstrap.md](configuration-and-bootstrap.md); phasing and the cloud cutover are in [migration.md](migration.md).
 
 ---
 
@@ -18,7 +18,7 @@ Three pieces of machinery already exist in-engine and are sound. **Only their ow
 | The iii/worker protocol handler (registration handshake → register connection → `WorkerRegistered` → fire triggers → read loop) | `Engine::handle_worker`, `engine/src/engine/mod.rs:1429`; `WorkerRegistered` send + `worker_connected` fire at `engine/mod.rs:1486-1499` | **Unchanged** in its registration mechanics; the auth branch is deleted (see [§7](#7-access-control-lives-outside-the-engine)). Still owned by the engine. |
 | The `Message` enum (`RegisterFunction`, `RegisterTrigger`, `InvokeFunction`, `InvocationResult`, `Ping/Pong`, `WorkerRegistered`, …) | `engine/src/protocol.rs:40-126`, `#[serde(tag="type")]` | **Zero changes.** No new variants. Correlation rides the existing `engine::workers::register` metadata call (see [§5](#5-the-unified-registration-protocol)). |
 
-The listener was wrapped in a "worker" (`iii-worker-manager`) only by historical accident; investigation track 04 confirms it manages nothing — it is a WS protocol endpoint. So the design is a re-homing exercise: **promote the listener to engine startup input keyed off compose `port`; keep the protocol exactly as-is; add three additive metadata fields so the engine can tell a daemon-managed connection from an independent one.**
+The listener was wrapped in a "worker" (`iii-worker-manager`) only by historical accident; investigation track 04 confirms it manages nothing — it is a WS protocol endpoint. So the design is a re-homing exercise: **promote the listener to engine startup input keyed off compose `port`; keep the protocol exactly as-is; add three additive metadata fields so the engine can tell a daemon-supervised connection from an independent one.** The engine supervises neither; it reports both.
 
 > **One terminology note that this whole spec depends on:** the in-engine listener concept is now called **`worker-gateway`**. It is an *internal engine concept*, **not a worker**. There is no `iii-worker-manager` worker, no `worker-gateway` worker, and no config entry for either. (The previously-misnamed `iii-worker-manager` worker is deleted; its config block is deleted.)
 
@@ -30,7 +30,7 @@ Per the shared decision contract (Critique 01 §A1) and the binary-topology deci
 
 ```mermaid
 flowchart TB
-  CF["worker-compose.yml<br/>{ version, port, gateway, configuration, defaults, workers }"]
+  CF["worker-compose.yaml<br/>{ version, port, gateway, defaults, workers (+ per-worker config) }"]
   LK["iii.lock<br/>(resolved versions/hashes)"]
 
   subgraph ENGINE["ENGINE — pure connection plane (core, NOT a worker)"]
@@ -39,16 +39,17 @@ flowchart TB
     REG["live-connection registry<br/>(function_ids, status, pid, isolation, compose_id, instance_token, managed)"]
     ROUTE["invocation routing (InvokeFunction / InvocationResult)"]
     WATCH["compose-file watcher → diff → drain"]
+    AVAIL["worker_available trigger<br/>(reports reachable workers + runtime info)"]
   end
 
   subgraph WOPS["iii-worker-ops — THE BRAIN (may be in-engine builtin)"]
-    SEM["compose semantics: parse + 4-layer merge + env precedence"]
+    SEM["compose semantics: parse + 5-layer merge + env precedence"]
     GRAPH["depends_on graph → cycle-detect → topo-sort → readiness gate"]
     RESOLVE["resolve / install / version → iii.lock"]
     CORR["correlation map: compose_id ⇄ instance_token ⇄ pid"]
   end
 
-  subgraph PD["iii-process-daemon — THE PID PARENT (separate long-lived process)"]
+  subgraph PD["iii-process-daemon — LOCAL SUPERVISOR (separate long-lived process · one runner option)"]
     TBL["authoritative in-memory process table"]
     SPAWN["spawn (process-group child, no setsid) / killpg / wait()-reap"]
     LOGS["log capture (ring + file)"]
@@ -63,11 +64,13 @@ flowchart TB
   CF -->|"workers map"| WOPS
   LK -.->|"replayed by"| RESOLVE
 
-  WOPS -->|"compose::up calls process::start per node"| PD
+  WOPS -->|"compose::up calls process::start per local node"| PD
   PD -->|"sandboxed worker: process::start calls sandbox::create"| SBX
   PD -->|"spawns + supervises"| CHILD["worker PIDs (host child / __vm-boot child)"]
+  IND["independent / remote worker<br/>(docker · systemd · launchd · bash · by hand · observe-only)"]
   CHILD -.->|"WS connect-back + instance_token"| ENGINE
-  ENGINE -->|"worker_connected{compose_id, managed}"| CORR
+  IND -.->|"WS connect (no token)"| ENGINE
+  ENGINE -->|"worker_connected / worker_available{compose_id, managed, runtime info}"| CORR
   CORR -->|"verify token vs process::list → READY"| WOPS
 ```
 
@@ -75,9 +78,9 @@ flowchart TB
 
 | Plane | Owns | NEVER does |
 |---|---|---|
-| **Engine** (core) | WS port (binds from `compose.port`), iii/worker protocol, registration handshake, live-connection registry, invocation routing, compose-file watcher, fires `worker_connected`/`worker_disconnected` | spawn a process; resolve versions; read worker scripts; own a PID; authenticate or authorize a caller (access control → `rbac-proxy` worker, [§7](#7-access-control-lives-outside-the-engine)) |
-| **`iii-worker-ops`** | compose semantics, depends_on topo-sort + readiness gate, resolve/install/version, `iii.lock`, the correlation map, reconcile desired↔actual | hold a Child handle; bind a socket; spawn a PID |
-| **`iii-process-daemon`** | being the direct parent of every host PID, the process table, spawn/killpg/wait()-reap, log capture, `instance_token` mint+inject, crash recovery | decide WHAT to run; resolve versions; speak the compose graph |
+| **Engine** (core) | WS port (binds from `compose.port`), iii/worker protocol, registration handshake, live-connection registry, invocation routing, compose-file watcher, fires `worker_connected`/`worker_disconnected` and the **`worker_available`** trigger (reports what is reachable, incl. remote, plus runtime info) | spawn a process; **manage or supervise any worker**; resolve versions; read worker scripts; own a PID; authenticate or authorize a caller (access control → `rbac-proxy` worker, [§7](#7-access-control-lives-outside-the-engine)) |
+| **`iii-worker-ops`** | compose semantics, depends_on topo-sort + readiness gate (by subscribing to `worker_available`), resolve/install/version, `iii.lock`, the correlation map, reconcile desired↔actual | hold a Child handle; bind a socket; spawn a PID |
+| **`iii-process-daemon`** | being the direct parent of the host PIDs **it itself spawns**, the process table of *those* processes, spawn/killpg/wait()-reap, log capture, `instance_token` mint+inject, crash recovery | decide WHAT to run; resolve versions; speak the compose graph; claim ownership of workers it did not spawn (docker/systemd/remote) |
 | **`iii-sandbox`** | microVM lifecycle, OCI image pull/catalog/overlay, in-VM exec/fs | be the process parent of host workers |
 
 **The port and the processes are two different resources owned by two different planes**, joined by a WS connect-back plus a per-spawn `instance_token`. This is what cleanly resolves "iii hosts the port" vs "the daemon owns processes": the engine owns the *connection* identity; the daemon owns the *process* identity; `iii-worker-ops` correlates the two.
@@ -86,49 +89,40 @@ flowchart TB
 
 ## 3. Boot sequence
 
-The engine boots from `worker-compose.yml`. There is no `config.yaml` in the steady state (it coexists behind a format-detection bridge for ≥3 releases — see [migration.md](migration.md)). Boot is ordered; readiness of the bootstrap floor (`configuration`, the daemons, `iii-worker-ops`) gates everything else.
+The engine boots from `worker-compose.yaml`. There is no `config.yaml` in the steady state (it coexists behind a format-detection bridge for ≥3 releases, see [migration.md](migration.md)). **The bootstrap floor is now just the `port`** (plus the optional `gateway:` listener knobs); there is no config-store read off disk, and iii boots with zero workers, including no `configuration` worker. Per-worker config is resolved from the compose file (`defaults.yaml` ◁ compose `config:`) at start, not from a separate store, so it is not a boot concern.
 
 ```mermaid
 sequenceDiagram
-  participant CLI as iii up (CLI)
+  participant CLI as iii --compose (CLI)
   participant ENG as Engine
-  participant CFG as configuration (store)
   participant WO as iii-worker-ops
   participant PD as iii-process-daemon
   participant W as worker PIDs
 
   CLI->>ENG: ensure engine running (cold start: boot iii)
-  Note over ENG: 1. parse worker-compose.yml (port, gateway, configuration, workers)
+  Note over ENG: 1. parse worker-compose.yaml (port, gateway, workers)
   Note over ENG: 2. worker-gateway.bind(compose.port)  [replaces config.rs:672-679 scan]
-  Note over ENG: 3. boot-read restart-tier config OFF DISK<br/>(bootstrap floor — see configuration-and-bootstrap.md)
-  ENG->>CFG: 4. start configuration store (mandatory)
-  ENG->>WO: 5. start iii-worker-ops (may be in-engine builtin)
-  ENG->>PD: ensure iii-process-daemon (separate process) is up
-  CLI->>WO: compose::up{} (streaming)
-  Note over WO: 6. topo-sort workers (depends_on) → for each node:
-  WO->>PD: process::start{compose_id, runtime, env(+IIIWORKER_PORT), ...}
+  Note over ENG: ENGINE is READY: port open, builtins live, ZERO workers required
+  CLI->>WO: compose::up{} (streaming)  [run by whatever invoked iii --compose]
+  Note over WO: 3. topo-sort workers (depends_on) → for each LOCAL node:
+  WO->>PD: process::start{compose_id, runtime, env(+IIIWORKER_PORT), config(resolved), ...}
   PD->>W: spawn grouped child, inject III_INSTANCE_TOKEN/III_COMPOSE_ID
-  W->>ENG: 7. WS connect-back → registration handshake → register fns/triggers
-  W->>CFG: register own config (configuration::register) + fetch (configuration::get) + register hot-reload trigger
+  W->>ENG: 4. WS connect-back → registration handshake → register fns/triggers
   ENG-->>WO: worker_connected{compose_id, instance_token, managed}
+  ENG-->>WO: worker_available{compose_id, runtime info}  (subscribed for depends_on gating)
   WO->>PD: verify token vs process::list → mark READY
-  Note over WO: 8. gate next topo level on readiness; repeat
-  ENG->>ENG: 9. watch compose file + configuration store for changes
+  Note over WO: 5. gate next topo level by subscribing to worker_available; repeat
+  ENG->>ENG: 6. watch compose file for changes (diff → drain)
 ```
 
 Numbered, with who-does-what:
 
-1. **Engine parses `worker-compose.yml`** — reads top-level `port`, `gateway`, `configuration`, `defaults`, `workers`. (The engine only consumes `port` + `gateway` itself; the `workers` map is consumed by `iii-worker-ops`.)
-2. **`worker-gateway` binds the WS port natively** from `compose.port`. This replaces the "find the first `iii-worker-manager` entry to learn the port" dance at `config.rs:672-679`; see the KEEP/MOVE/DELETE table in [§4](#4-keepmovedelete-the-engine-side).
-3. **Boot-read the restart-tier config off disk.** A small irreducible floor must be read directly off disk before the store is live (the bootstrap chicken-and-egg). Detail in [configuration-and-bootstrap.md](configuration-and-bootstrap.md).
-4. **Start the `configuration` store** (mandatory; the universal hidden dependency — Critique 02 #6). The store is empty of per-worker entries at this point; nothing is seeded from compose — each worker populates its own entry at boot (step 6) via `configuration::register`.
-5. **Start `iii-worker-ops`** and ensure `iii-process-daemon` (and `iii-sandbox` if needed) are up as separate processes.
-6. **`compose::up` (in `iii-worker-ops`, streaming) topo-sorts the worker set** and, per node, calls `process::start` on the daemon. (Graph orchestration is in `iii-worker-ops`, never in the engine or the daemon — see [cli-and-functions.md](cli-and-functions.md).)
-7. **Each spawned worker connects back** to the gateway port, completes the registration handshake, and registers its functions/triggers; at boot the worker registers its OWN config schema + initial value with `configuration::register(id, schema, initial_value)`, then reads via `configuration::get` and registers a hot-reload trigger off the configuration store.
-8. **Readiness gates the next topo level** via `status::watch_until_ready` (default `depends_on` condition = READY, not merely started).
-9. **The engine watches** the compose file and the configuration store for changes, diffing and draining (see [§8](#8-the-hot-reload-drain-protocol)).
-
-> **Bootstrap-floor implicit roots** (Critique 02 #6/#12): `configuration`, `iii-process-daemon`, and `iii-worker-ops` are implicit roots of *every* dependency graph, made ready before step 6. A user worker may legally `depends_on: [configuration]`; it validates OK and is a no-op gate (they are always ready first). If `configuration` never readies, `up` hard-fails — it is the floor.
+1. **Engine parses `worker-compose.yaml`** (reads top-level `port`, `gateway`, `workers`). The engine only consumes `port` + `gateway` itself; the `workers` map, including each worker's `config:` block, is consumed by `iii-worker-ops`.
+2. **`worker-gateway` binds the WS port natively** from `compose.port`. This replaces the "find the first `iii-worker-manager` entry to learn the port" dance at `config.rs:672-679`; see the KEEP/MOVE/DELETE table in [§4](#4-keepmovedelete-the-engine-side). At this point the engine is READY with **zero workers**: the `configuration` worker is OPTIONAL and is not started by the engine. Whatever process invoked `iii --compose` (or ran `iii worker compose up` separately) is the runner that drives the rest.
+3. **`compose::up` (in `iii-worker-ops`, streaming) topo-sorts the worker set** and, per LOCAL node, calls `process::start` on the daemon, passing the resolved per-worker config (`defaults.yaml` ◁ compose `config:`). (Graph orchestration is in `iii-worker-ops`, never in the engine or the daemon, see [cli-and-functions.md](cli-and-functions.md).) Remote nodes are not spawned here; they are gated on availability (step 5).
+4. **Each spawned worker connects back** to the gateway port, completes the registration handshake, and registers its functions/triggers. If a `configuration` worker is present, the worker reads its effective config from it and registers a hot-reload trigger; without one, config is static (resolved at start).
+5. **Readiness gates the next topo level** by **subscribing to the engine's `worker_available` trigger** ([§5.5](#55-the-worker_available-trigger-reporting-not-managing)), not polling. This is also how a `depends_on` on a REMOTE worker resolves. (Default `depends_on` condition = READY, not merely started.)
+6. **The engine watches** the compose file for changes, diffing and draining (see [§8](#8-the-hot-reload-drain-protocol)).
 
 ---
 
@@ -165,15 +159,15 @@ The engine's `create_worker` resolution chain (`config.rs:306-369`) loses the tw
 
 ## 5. The unified registration protocol
 
-Three worker kinds, **one wire protocol**, **no `Message` enum changes**. What we add is a single additive correlation handshake so all three land in the same registry with a stable `compose_id`, and so the engine can tell a daemon-managed (controllable) connection from an independent (observe-only) one.
+Three worker kinds, **one wire protocol**, **no `Message` enum changes**. What we add is a single additive correlation handshake so all three land in the same registry with a stable `compose_id`, and so the engine can tell a daemon-supervised (locally controllable by its runner) connection from an independent (observe-only) one. "Managed" here means **daemon-supervised by the local runner**, never engine-managed; the engine manages no worker of any kind.
 
 ### 5.1 The three kinds
 
-| Kind | Spawned by | Connects how | Engine can control lifecycle? |
+| Kind | Spawned by | Connects how | Runner can control lifecycle? |
 |---|---|---|---|
 | **(a) built-in / in-engine** | — (in-process) | No WS — `register_functions` at build (`config.rs:681-713`) | n/a (in-process) |
-| **(b) daemon-managed** (local binary, sandbox VM, ex-`iii-exec`) | `iii-process-daemon` | child env carries `IIIWORKER_PORT` + `III_COMPOSE_ID` + `III_INSTANCE_TOKEN`; WS connect → register | **Yes** — daemon owns the PID; `iii-worker-ops` can stop/restart |
-| **(c) independent** | a developer (separate terminal, `npm run dev`, raw binary) | WS connect with no `instance_token` (or an unrecognized one) | **No** — observe-only. `ps` shows it; `stop`/`restart` returns "not managed by this compose". `process::attach` is the opt-in best-effort escape hatch. |
+| **(b) daemon-managed** (local binary, sandbox VM, ex-`iii-exec`) | `iii-process-daemon` (the local runner's supervisor) | child env carries `IIIWORKER_PORT` + `III_COMPOSE_ID` + `III_INSTANCE_TOKEN`; WS connect → register | **Yes, by its local runner**: the daemon owns the PID; the runner's `iii-worker-ops` can stop/restart. (Never the engine; the engine only routes and reports.) |
+| **(c) independent** | anything *other* than the local daemon: a developer (separate terminal, `npm run dev`, raw binary), or a **docker / systemd / launchd / bash-managed** process, or a **remote** worker on another host | WS connect with no `instance_token` (or an unrecognized one) | **No (to this compose/runner)**, observe-only. `ps` shows it; `stop`/`restart` returns "not managed by this compose". Its own manager (docker, systemd, the remote host's runner) supervises it. `process::attach` is the opt-in best-effort escape hatch for local-but-unparented processes. |
 
 The kind-(c) gap (the engine cannot control independently-started workers) is **now explicit and verifiable, not accidental**. Note also: independent workers were never an iii-zombie source — their actual parent (the user's shell, or init) reaps them; the iii zombies came only from iii's own detached spawns, which the daemon now owns (Critique 02 #7).
 
@@ -196,18 +190,18 @@ sequenceDiagram
   W->>ENG: engine::workers::register{ compose_id, instance_token, managed:true, pid, isolation, runtime }
   ENG->>ENG: store compose_id / instance_token / managed on WorkerConnection
   W->>ENG: RegisterFunction / RegisterTrigger / RegisterTriggerType
-  ENG->>WO: fire worker_connected{ compose_id, managed:true }
+  ENG->>WO: fire worker_connected{ compose_id, managed:true } + worker_available{ runtime info }
   WO->>PD: verify (compose_id, instance_token) against process::list tokens
   WO->>WO: verified → mark instance READY (WS conn ⇄ daemon PID joined)
   end
 
   rect rgb(255,245,235)
-  Note over W,ENG: (c) INDEPENDENT
+  Note over W,ENG: (c) INDEPENDENT / REMOTE (docker · systemd · launchd · bash · another host)
   W->>ENG: WS connect → registration handshake (no token)
   ENG->>W: WorkerRegistered{ worker_id }
   W->>ENG: engine::workers::register{ managed:false } (or no token)
-  ENG->>WO: fire worker_connected{ managed:false }
-  WO->>WO: record as INDEPENDENT (visible in ps; stop/restart → "not managed")
+  ENG->>WO: fire worker_connected{ managed:false } + worker_available{ runtime info }
+  WO->>WO: record as INDEPENDENT (visible in ps; stop/restart → "not managed"); depends_on subscribers still gate on its availability
   end
 ```
 
@@ -225,38 +219,50 @@ This makes "managed vs independent" a **verifiable property, not a guess** — i
 
 ### 5.4 Built-in workers (kind a)
 
-Built-ins never touch the socket; `register_functions` puts them in the engine registry in-process at build (`config.rs:681-713`). They appear in `compose ps` / `worker list` with `kind: builtin`, no PID of their own. `iii-worker-ops` (if in-engine) is itself a kind-(a) builtin; `iii-process-daemon` and `iii-sandbox` are kind-(b)-shaped from the engine's view (separate processes that connect over WS) but are bootstrap-floor, started before any user worker.
+Built-ins never touch the socket; `register_functions` puts them in the engine registry in-process at build (`config.rs:681-713`). They appear in `compose ps` / `worker list` with `kind: builtin`, no PID of their own. `iii-worker-ops` (if in-engine) is itself a kind-(a) builtin; `iii-process-daemon` and `iii-sandbox` are kind-(b)-shaped from the engine's view (separate processes that connect over WS), started by the runner before any user worker.
+
+### 5.5 The `worker_available` trigger (reporting, not managing)
+
+The engine reports availability; it does not manage. Alongside the connection-level `worker_connected` / `worker_disconnected` triggers, the engine fires a **`worker_available`** trigger that names which workers are reachable and carries their **runtime info** (`compose_id`, `worker_id`/type, `managed`, runtime, version, os, pid where known, isolation). This is the *one* mechanism through which the rest of the system learns what is up.
+
+- **`depends_on` readiness gating works by SUBSCRIBING to `worker_available`** (not by polling): `iii-worker-ops` subscribes and releases each topo level when its declared deps report available + READY. Because the engine reports availability regardless of *who* started a worker, this is also exactly how a `worker-compose.yaml` can `depends_on` a **REMOTE** worker (one connected from another host): the dependency resolves the moment that worker reports available over the shared engine. See [§3](#3-boot-sequence) step 5 and `depends_on` in [worker-compose.md](worker-compose.md).
+- **Management stays with the runner.** The engine emitting `worker_available` is purely informational. The process that ran `iii worker compose up` (the runner) supervises the workers it started, using its local `iii-process-daemon` (or docker/systemd/launchd/bash). The engine never acts on `worker_available`; it only fires it so subscribers can react.
+- **Reachability, not health.** `worker_available` means "connected and reporting"; the L2 `healthy` condition still rides the worker's own `health::check` (see the README `health::check` contract). A worker can be available but not yet healthy.
+
+This is the engine-side half of the multi-host hub model (D2): multiple machines each run `iii worker compose up` against one shared engine, and the engine's availability reporting is what lets a runner gate on workers it does not own.
 
 ---
 
 ## 6. End-to-end: `compose up` (who opens the socket / who spawns / who connects)
 
-`iii up` and `iii worker compose up` are thin CLI wrappers over the `compose::up` function (streaming). Below is the full path with the two start conditions made explicit.
+`iii --compose` (start the engine + run `compose up`) and `iii worker compose up` are thin CLI wrappers over the `compose::up` function (streaming). The engine never manages a worker in any of this; the **runner** (whatever process invoked the command) supervises locally via its `iii-process-daemon`. Below is the full path with the two start conditions made explicit.
 
 ### 6.1 Cold start (engine not running)
 
 ```
-STEP 0   CLI `iii up` finds no engine on compose.port.
+STEP 0   CLI `iii --compose` finds no engine on compose.port.
 STEP 0a  CLI starts the engine binary `iii` (foreground, or via launchd/systemd unit).
-         ENGINE boot (see §3): parse compose → worker-gateway.bind(port) → boot-read
-         restart-tier config → start configuration + iii-worker-ops (+ ensure daemons up).
-         ENGINE is READY: port open, builtins live, NO user workers yet.
-         ENGINE does NOT spawn any external worker (create_worker steps 3&4 deleted).
+         ENGINE boot (see §3): parse compose → worker-gateway.bind(port).
+         ENGINE is READY: port open, builtins live, ZERO workers (no configuration
+         worker required). ENGINE does NOT spawn or manage any worker
+         (create_worker steps 3&4 deleted).
+STEP 0b  The same CLI invocation then runs compose::up{} as the runner (§6.2).
 ```
 
 ### 6.2 Connected path (engine already running)
 
 ```
-STEP 0   CLI `iii up` connects to the engine WS and invokes compose::up{}.
-STEP 1   compose::up runs IN iii-worker-ops: parse workers: map → 4-layer merge
-         (manifest ← compose ← env_file[later-wins] ← process env) → depends_on graph
-         → cycle-detect → topo-sort.                          [see cli-and-functions.md]
-         (The merge governs runtime/scripts/env/depends_on/healthcheck only;
-          configuration is NOT a merged field — it lives in the configuration worker.)
+STEP 0   CLI (`iii worker compose up`, or the compose-up half of `iii --compose`)
+         connects to the engine WS and invokes compose::up{} as the RUNNER.
+STEP 1   compose::up runs IN iii-worker-ops: parse workers: map → 5-layer merge
+         (defaults.yaml ← manifest ← compose ← env_file[later-wins] ← process env;
+          per-worker config: IS a merged field: defaults.yaml ◁ compose base ◁
+          target overlay) → depends_on graph → cycle-detect → topo-sort.
+                                                               [see cli-and-functions.md]
 STEP 2   Per node (topo order) iii-worker-ops RESOLVES the worker (does NOT spawn):
          workspace → local presence-lock; package → registry resolve + iii.lock;
-         download/verify (sha256) if missing. (Config is NOT resolved here — each
-         worker registers its own config at boot via configuration::register.)
+         download/verify (sha256) if missing. The effective per-worker config
+         (defaults.yaml ◁ compose config:) is resolved here and handed to the daemon.
 STEP 3   iii-worker-ops invokes process::start{ compose_id, runtime, scripts, env
          (incl. IIIWORKER_PORT), isolation } on the daemon → returns
          { instance_token, pid, status: starting }.
@@ -270,16 +276,21 @@ STEP 5   The worker boots and CONNECTS BACK to the gateway port:
          WorkerConnection, sends WorkerRegistered{worker_id} → SDK calls
          engine::workers::register{ compose_id, instance_token, managed:true, ... }
          → ENGINE stores correlation fields → SDK RegisterFunction/RegisterTrigger
-         → ENGINE fires worker_connected{ compose_id, managed:true }.
+         → ENGINE fires worker_connected{ compose_id, managed:true } AND
+           worker_available{ compose_id, runtime info }.
 STEP 6   CORRELATION: iii-worker-ops' worker_connected handler matches
          (compose_id, instance_token) against daemon process::list tokens → verified →
-         mark READY (WS conn ⇄ daemon PID joined). Gate depends_on via
-         status::watch_until_ready. Unmatched/absent token → INDEPENDENT (observe-only).
-STEP 7   iii-worker-ops proceeds to the next topo level once deps are READY; when all
-         are READY (or a failure policy trips), compose::up emits final ComposeEvent.
-STEP 8   `iii up` (foreground) attaches as a log-streaming client and installs a
-         SIGINT→compose::down handler. The daemon is ALWAYS detached: kill -9 of the
-         `iii up` CLI leaves workers RUNNING. `-d` = no attach + no SIGINT handler.
+         mark READY (WS conn ⇄ daemon PID joined). depends_on gates by SUBSCRIBING
+         to worker_available (local or remote workers alike, §5.5).
+         Unmatched/absent token → INDEPENDENT (observe-only; still reported available).
+STEP 7   iii-worker-ops proceeds to the next topo level once deps report available +
+         READY; when all are READY (or a failure policy trips), compose::up emits
+         final ComposeEvent.
+STEP 8   `iii --compose` / `iii worker compose up` (foreground) attaches as a
+         log-streaming client and installs a SIGINT→compose::down handler. The daemon
+         is ALWAYS detached: kill -9 of the runner CLI leaves workers RUNNING.
+         `-d` = no attach + no SIGINT handler. (The engine manages nothing here; the
+         runner supervises via its local daemon.)
 ```
 
 **Who-does-what summary** (engine column only is in scope here; full table in [cli-and-functions.md](cli-and-functions.md)):
@@ -294,7 +305,9 @@ STEP 8   `iii up` (foreground) attaches as a log-streaming client and installs a
 | Accept WS connect + register | ✅ | | |
 | Store `compose_id`/token/`managed` on conn | ✅ | | |
 | Correlate WS conn ⇄ PID | | ✅ (token match) | |
-| Fire `worker_connected`/`worker_disconnected` | ✅ | | |
+| Fire `worker_connected`/`worker_disconnected` + `worker_available` | ✅ | | |
+| Subscribe to `worker_available` to gate `depends_on` (local + remote) | | ✅ | |
+| Supervise / manage the worker lifecycle | ❌ (manages nothing) | | ✅ (local runner, for the PIDs it spawned) |
 
 ---
 
@@ -373,11 +386,11 @@ sequenceDiagram
 Steps:
 
 1. **Quiesce routing.** `iii-worker-ops` tells the engine to stop routing **new** `InvokeFunction`s to the doomed instance. New calls for that function either route to a sibling instance (if `assign_instance_ids` produced more than one) or queue/error per policy. No new `oneshot`s are created against the old PID.
-2. **Wait, bounded, for in-flight to resolve.** The engine reports the in-flight count; `iii-worker-ops` waits until it reaches zero or `drain_timeout` expires.
-3. **Then SIGTERM** via `process::stop` (daemon executes SIGTERM → grace → SIGKILL on the group, then `wait()`-reaps — see [process-daemon.md](process-daemon.md)).
-4. **On timeout expiry: force-halt.** The remaining in-flight invocations are halted via the existing `halt_invocation` path (callers get `invocation_stopped`). This is bounded, logged, and surfaced as a `ComposeEvent` so the operator sees "drained N, force-halted M" rather than silent loss.
+2. **Wait, bounded, for in-flight to resolve.** The engine reports the in-flight count; `iii-worker-ops` waits until it reaches zero or `drain_timeout` expires. With `drain_timeout: Inf` it waits forever (never force-halts); with `drain_timeout: 0` it force-halts immediately (skips the wait).
+3. **Then SIGTERM** via `process::stop` (daemon executes SIGTERM → grace → SIGKILL on the group, then `wait()`-reaps, see [process-daemon.md](process-daemon.md)).
+4. **On a finite timeout expiry: force-halt.** The remaining in-flight invocations are halted via the existing `halt_invocation` path (callers get `invocation_stopped`). This is bounded, logged, and surfaced as a `ComposeEvent` so the operator sees "drained N, force-halted M" rather than silent loss. (`Inf` never reaches this branch; `0` reaches it immediately.)
 
-**`drain_timeout` default:** `30s` (matching the existing `SPAWN_GRACE` ergonomics from `registry_worker.rs`), overridable per worker in the compose block. See the Open questions below.
+**`drain_timeout` value (D6):** a finite default of `30s` (matching the existing `SPAWN_GRACE` ergonomics from `registry_worker.rs`), per-worker overridable in the compose block. It may also be set to **`Inf`** (wait forever, never force-halt) or **`0`** (immediate force-halt). See the Open questions below.
 
 ### 8.3 Blue/green (future, stateless workers)
 
@@ -401,7 +414,7 @@ What today's diff does NOT do is **drain** — that is the genuinely new contrac
 Reconcile-on-edit (the compose-file watcher fires a diff) stops a removed worker through **the same drain path as §8** — quiesce → bounded wait → SIGTERM via `process::stop`. Additionally:
 
 - **Removing a worker that others still `depends_on`** (a live dependency target) → **error or cascade-warn** (decision: error by default; `--cascade` to also stop dependents). The engine surfaces the orphaned-dependents set; `iii-worker-ops` enforces the policy.
-- The removed worker's `configuration` entry is *not* auto-deleted (config is durable; deletion is a separate explicit `configuration::*` action).
+- The removed worker's `config:` block in the compose file is *not* auto-deleted (it stays in the human-authored `worker-compose.yaml`; removing it is a separate explicit edit, or a `configuration::*` action if the optional `configuration` worker is present).
 
 ### 9.2 Engine restart loses the correlation map (Critique 02 #8)
 
@@ -424,7 +437,7 @@ ENGINE RESTART (daemon + workers survive):
 
 ## 10. Open questions
 
-1. **`drain_timeout` default and per-worker override.** Recommended default **30s** (consistent with `registry_worker.rs::SPAWN_GRACE`). Should there be a global `gateway.drain_timeout` plus a per-worker override, and should `0` mean "force-halt immediately" (today's behavior) vs "wait forever"? **Recommended:** global default 30s, per-worker override, `0` = immediate force-halt; no infinite wait.
+1. **`drain_timeout` default and per-worker override (D6, ratified).** A global `gateway.drain_timeout` with a per-worker override. The value may be a finite duration (**default `30s`**, consistent with `registry_worker.rs::SPAWN_GRACE`), **`0`** = immediate force-halt, or **`Inf`** = wait forever (never force-halt). This supersedes the earlier "no infinite wait" stance: `Inf` is now permitted (same `Inf`-capable timeout model as start/healthcheck and `iii trigger --timeout`).
 2. **Multi-engine / multi-project on one machine** (Critique 02 #5/#16). The daemon and `instance_token` model assume `compose_id` is unique, but two projects can both have a worker named `math`. The engine binds one port per project; the **daemon must namespace its table by `(port_or_project_root, compose_id)`** so a `down` in one project cannot reap another's PID. This is primarily a daemon-state-key question (see [process-daemon.md](process-daemon.md)) but it touches engine correlation (the engine's `compose_id` field alone is not globally unique). **Recommended:** the engine threads the listener port (or project root) alongside `compose_id` in `engine::workers::register`, making the correlation key `(port, compose_id, instance_token)`. The lead author (README.md) must confirm this with the daemon spec.
 3. **Function-registration collision when an independent worker claims a managed `compose_id`** (Critique 02 #7). Token-gating controls *lifecycle* but not *function registration* — two connections can both register `math::add`. **Recommended default:** reject the second registration of an already-registered `function_id` from a different connection (last-writer-loses), with a clear `function_already_registered` error; revisit namespacing later. Needs a decision the lead must record.
 
@@ -432,8 +445,8 @@ ENGINE RESTART (daemon + workers survive):
 
 ## See also
 
-- [worker-compose.md](worker-compose.md) — the `port` / `gateway:` / `configuration:` / `workers:` schema this engine reads.
+- [worker-compose.md](worker-compose.md): the `port` / `gateway:` / `workers:` (with per-worker `config:`) schema this engine reads; there is no top-level `configuration:` block.
 - [process-daemon.md](process-daemon.md) — PID ownership, `process::*`, the `instance_token` mint, crash recovery, the daemon-state namespacing for the multi-project case.
 - [cli-and-functions.md](cli-and-functions.md) — `compose::up` (streaming) topo-sort/readiness orchestration that calls `process::start`, and the pre-spawn idempotence check.
-- [configuration-and-bootstrap.md](configuration-and-bootstrap.md) — the boot-read-off-disk floor (step 3) and the `configuration` store (step 4).
+- [configuration-and-bootstrap.md](configuration-and-bootstrap.md) — the `port`-only bootstrap floor and the OPTIONAL `configuration` worker (a read/update layer over the active compose file; iii boots with zero workers).
 - [migration.md](migration.md) — the dual-parser bridge, the cloud cutover, and the bake-in phase that deletes `iii-worker-manager`.

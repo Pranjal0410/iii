@@ -1,13 +1,16 @@
-# Configuration & Bootstrap — killing config.yaml; the config store; the bootstrap floor
+# Configuration & Bootstrap: killing config.yaml; defaults.yaml + compose config:; the bootstrap floor
 
 This file specifies how `config.yaml` dies and where its two responsibilities go. It defines the
-**bootstrap floor** — the irreducible set of facts the engine must know before any worker can answer
-a function call — and the runtime **configuration store** that owns everything else. It also defines
-the `config-worker:<id>` addressing scheme, the boot sequence, env precedence (env-only; per-worker
-configuration is not a compose concern at all), the
-`configuration`-worker-as-hard-dependency rule, and the `iii migrate` tool. Schema for the compose
-file itself lives in [worker-compose.md](worker-compose.md); the engine boot and baked-in gateway
-live in [engine-and-gateway.md](engine-and-gateway.md); process ownership lives in
+**bootstrap floor** (the irreducible set of facts the engine must know before any worker can answer
+a function call) and the **per-worker config model**: a worker ships its own `defaults.yaml`, the
+user's `worker-compose.<target>.yaml` carries the `config:` overrides, and the **optional**
+`configuration` worker reads the effective value and writes runtime changes back into the active
+compose file. There is no separate `./data/configuration` store of record. It also defines the
+`config-worker:<id>` addressing scheme, the boot sequence, env precedence (env and config are
+orthogonal namespaces), the optional-not-mandatory rule for the `configuration` worker, and the
+`iii migrate` tool. Schema for the compose file itself lives in
+[worker-compose.md](worker-compose.md); the engine boot and baked-in gateway live in
+[engine-and-gateway.md](engine-and-gateway.md); process ownership lives in
 [process-daemon.md](process-daemon.md); env-precedence detail and secret handling live in
 [worker-compose.md](worker-compose.md) and [secrets.md](secrets.md).
 
@@ -34,103 +37,118 @@ config tree; it is *only* a list of which workers to start plus a per-worker see
 
 Killing it re-homes **exactly two responsibilities**:
 
-1. **The static bootstrap floor** — facts that must be known *before any worker exists*. These move
-   to **`worker-compose.yml`** (see [worker-compose.md](worker-compose.md)).
-2. **Per-worker runtime config** — every `config:` blob. This is owned end-to-end by the mandatory
-   **`configuration`** worker store (one `ConfigurationEntry` per id). There is **no config in
-   `worker-compose.yml` at all** — no seed and no pointer. Each worker registers its own config schema
-   + initial value at boot by calling `configuration::register(id, schema, initial_value)` from its
-   own code/SDK; the store is the sole live source of truth.
+1. **The static bootstrap floor** (facts that must be known *before any worker exists*). This shrinks
+   to **one irreducible fact, the WS gateway `port`** (plus optional `gateway:` listener knobs), and
+   moves to **`worker-compose.yaml`** (see [worker-compose.md](worker-compose.md)). There is no
+   store-location to bootstrap.
+2. **Per-worker runtime config** (every `config:` blob). This re-homes to the worker's shipped
+   **`defaults.yaml`** overridden by the per-worker **`config:`** block in
+   `worker-compose.<target>.yaml`. Effective config per worker = `defaults.yaml` ◁ compose base
+   `config:` ◁ active target overlay; anything not overridden falls back to `defaults.yaml`. The
+   **optional** `configuration` worker mediates this at runtime: it reads the effective value and, on
+   `configuration::set`, writes the change back into the active compose file (never `defaults.yaml`).
 
-This split is dictated by a chicken-and-egg constraint, not taste. The bootstrap floor is exactly
-three facts (§2). Everything else is migratable — and the codebase has already migrated two workers
-(`iii-state` #1860, `iii-observability` b38a5646) to prove the pattern.
+This split is dictated by a chicken-and-egg constraint (the `configuration` worker, when present, is
+reachable only over the gateway port), not taste. The bootstrap floor is now a single fact (§2).
+Everything else is per-worker config carried by `defaults.yaml` + compose, and the codebase has
+already externalized two workers (`iii-state` #1860, `iii-observability` b38a5646) through the
+`configuration::*` surface that this model reuses.
 
 > **Naming note (canonical).** `config-worker` is a **URI scheme**, not a worker. There is no
-> `config-worker` worker. `config-worker:<id>` resolves to a `ConfigurationEntry{id}` held by the
-> worker whose id is **`configuration`**. Do not introduce a `config-worker` worker anywhere.
+> `config-worker` worker. `config-worker:<id>` is the addressing scheme for a worker's config entry,
+> resolved by the worker whose id is **`configuration`** against the active `worker-compose.yaml`
+> (with `defaults.yaml` as the floor). Do not introduce a `config-worker` worker anywhere.
 
 ---
 
-## 2. The bootstrap floor — exactly three irreducible facts
+## 2. The bootstrap floor (one irreducible fact)
 
-The floor is the minimal set the engine must resolve *statically* (off disk, before the store is
-reachable). There are three, and only three.
+The floor is the minimal set the engine must resolve *statically* (off the compose file, before any
+worker exists). It is now a single fact, the gateway `port`. The old store-location fact is deleted
+(there is no store), and early-boot config reads now come from the compose + defaults that are
+already parsed at boot, not from a separate disk store.
 
-| Fact | What it is | Source today | Why it CANNOT live in the store |
+| Fact | What it is | Source today | Why it must be resolved at the floor |
 |---|---|---|---|
-| **B1 — the WS gateway port** | The single TCP port SDK workers connect to (default `49134`). | Scanned out of the `iii-worker-manager` worker entry's `WorkerManagerConfig.port` in `EngineBuilder::build` (`config.rs:672-679`), fallback `DEFAULT_PORT` (`worker/mod.rs:36`). | The `configuration` worker is reachable **only over this port**. You cannot read the port from the thing the port lets you reach. |
-| **B2 — the configuration store location** | Where the `fs` adapter persists (`directory`, default `./data/configuration`). | `ConfigurationModuleConfig.adapter` (`configuration/config.rs:13-25`); `DEFAULT_DIRECTORY = "./data/configuration"` (`adapters/fs.rs:35`). | The store cannot read *its own persistence location from itself*. It must be told where its files live before it can read any file. |
-| **B3 — restart-tier config read during early boot** | Config consumed before any worker exists — e.g. logging/trace init reads `iii-observability`. | Persisted entry `./data/configuration/<id>.yaml`, **boot-read directly off disk** with `${VAR}` expansion + `catch_unwind` fallback (commit b38a5646; the `iii-observability` precedent). | The value is *stored* in the configuration worker, but it is needed *before that worker is up*. The only way to break the cycle is to read the persisted file directly at boot. B3 therefore depends on B2 (knowing the store dir). |
+| **B1 (the WS gateway port)** | The single TCP port SDK workers connect to (default `49134`); the optional `gateway:` listener knobs (host/rbac/middleware) ride alongside it. | Scanned out of the `iii-worker-manager` worker entry's `WorkerManagerConfig.port` in `EngineBuilder::build` (`config.rs:672-679`), fallback `DEFAULT_PORT` (`worker/mod.rs:36`). | The `configuration` worker, when present, is reachable **only over this port**. You cannot read the port from the thing the port lets you reach. It is the one fact every plane already holds (project identity, README). |
+| ~~B2 (the configuration store location)~~ | **DELETED.** There is no `./data/configuration` store of record. The compose file (+ each worker's `defaults.yaml`) IS the persistence; there is no store directory to bootstrap. | n/a | n/a |
+| **B3 (early-boot config, read from the already-parsed compose + defaults)** | Config consumed before any worker is up, e.g. logging/trace init reads `iii-observability`. | Resolved at boot from the worker's `defaults.yaml` ◁ the active compose `config:` block, which the engine has already parsed in step [1] (with `${VAR}` expansion + `catch_unwind` fallback, per the b38a5646 precedent). | The value is needed *before that worker is up*, but it is not a separate disk-store read: the compose file and the worker's `defaults.yaml` are already in memory once the compose file is parsed, so early-boot consumers read the resolved value directly. |
 
-**Bootstrap floor = `{ port, store location, restart-tier boot-reads }` — three facts. Nothing else
-is irreducible.** B1 collapses the entire `config.rs:672-679` scan into a single top-level field
-read; B3 is not a *new* file in compose — it is the existing b38a5646 boot-read pattern, reused
-verbatim for any future early-boot value, parameterized by B2's directory.
+**Bootstrap floor = `{ port }` (plus the optional `gateway:` knobs); one irreducible fact. Nothing
+else needs to be resolved before workers exist.** B1 collapses the entire `config.rs:672-679` scan
+into a single top-level field read; B3 is not a new disk read but a read of the
+`defaults.yaml`-over-compose value already parsed at boot.
 
 The B1 scan deletion concretely: the seven-line `workers.iter().find("iii-worker-manager")…` block at
 `config.rs:672-679` becomes `self.engine.set_worker_manager_port(compose.port)`.
 
 ---
 
-## 3. The compose-vs-store line
+## 3. The bootstrap-static-vs-per-worker-config line
 
-What stays static in `worker-compose.yml` vs what moves into the runtime store, exhaustively:
+What is bootstrap-static (resolved at the floor, before workers exist) vs what is per-worker config
+(lives in the compose `config:` block over the worker's `defaults.yaml`, hot-reloadable via the
+optional `configuration` worker), exhaustively:
 
-| Stays in `worker-compose.yml` (bootstrap, static, read before workers exist) | Moves to the `configuration` store (runtime, hot-reloadable, read via `configuration::get`) |
+| Bootstrap-static (read at the floor, before workers exist) | Per-worker config (compose `config:` over `defaults.yaml`; hot-reloadable via the optional `configuration` worker) |
 |---|---|
-| **`port`** — the WS gateway port (B1). The store is reachable only over it. | Every per-worker `config:` blob: `iii-stream`, `iii-queue`, `iii-pubsub`, `iii-cron`, `iii-http`, `iii-bridge`, `iii-sandbox`, the runtime slice of `iii-observability`, etc. |
-| **The worker list + topology** — which workers, their `runtime`, `scripts`, `depends_on`, `environment`, `env_file`. (There is **no** per-worker config in compose — no seed, no pointer.) | Per-worker schema-validated values, addressed by id (`config-worker:<id>`), `${VAR}`-expanded on read, watched for hot-reload via the `configuration` trigger type. Each worker registers its own schema + initial value at boot via `configuration::register`. |
-| **`configuration:` store location** (B2) — adapter + directory of the store's own backing files. It cannot read its own location from itself. | The *live* slice of any worker's config (e.g. log-level changes that apply without restart). |
-| **`gateway:`** — host / rbac / middleware listener knobs, bound when the port binds. | — |
-| **B3 restart-tier values** read during early boot (logging init). *Stored* in the worker but **boot-read off disk** at the floor. | — |
+| **`port`** (the WS gateway port, B1). The `configuration` worker, when present, is reachable only over it. | Every per-worker `config:` value: `iii-stream`, `iii-queue`, `iii-pubsub`, `iii-cron`, `iii-http`, `iii-bridge`, `iii-sandbox`, the runtime slice of `iii-observability`, etc. Effective value = the worker's `defaults.yaml` ◁ compose base `config:` ◁ active target overlay. |
+| **`gateway:`** (host / rbac / middleware listener knobs), bound when the port binds. | Per-worker schema-validated values, addressed by id (`config-worker:<id>`), `${VAR}`-expanded on read, watched for hot-reload via the `configuration` trigger type. The default lives in the worker's `defaults.yaml`; the compose `config:` block overrides it. |
+| **The worker list + topology**: which workers, their `runtime`, `scripts`, `depends_on`, `environment`, `env_file`, and their per-worker `config:` overrides. | The *live* slice of any worker's config (e.g. log-level changes that apply without restart). `configuration::set` writes the change back into the active compose file. |
 
 > Top-level compose shape (canonical; see [worker-compose.md](worker-compose.md) for full schema):
-> `version`, `port`, `gateway:`, `configuration:`, `defaults:`, `workers:`. The `configuration:`
-> block is an **object** mapping to the real `ConfigurationModuleConfig`/`AdapterEntry` shape — not a
-> `config_store:` scalar (per critique 01 A3).
+> `version`, `port`, `gateway:`, `defaults:`, `workers:` (each worker entry may carry a `config:`
+> block). There is **no top-level `configuration:` store-location block**: there is no store of
+> record to locate. Per-worker config lives in each worker's `config:` block over its `defaults.yaml`.
 
 ```yaml
-configuration:
-  adapter: fs                       # fs (default) | bridge
-  directory: ./data/configuration   # fs-only; B2 — the store's own location
-  ttl_seconds: 0                    # optional, runtime-tunable but simplest declared here
+version: "1"
+port: 49134                          # B1, the WS gateway port (the ONLY bootstrap fact)
+gateway: { rbac: ... }               # optional listener knobs, bound when the port binds
+
+workers:
+  iii-observability:
+    runtime: { package: workers.iii.dev/iii-observability:latest }
+    config:                          # overrides the worker's shipped defaults.yaml
+      service_name: my-app
 ```
 
-`ttl_seconds` is runtime-tunable in principle but is simplest declared here alongside the adapter;
-the `bridge` adapter carries its remote target here too (B2: you must know where the remote store is
-before you can read config — see §10 rule 3).
+The `bridge` case (delegating config reads to a remote engine's `configuration` worker) is expressed
+as a per-worker `config:` pointer (`config-worker:<id>` against a remote source), not a top-level
+store-location block; see §6.
 
 ---
 
 ## 4. The new boot sequence
 
-The whole point of the floor is ordering. The engine binds the port *before* the store starts,
-boot-reads restart-tier config *off disk* before the store worker is up, then starts the store, and
-only then starts the rest of the graph; each worker registers its own config schema + initial value
-at boot. See [engine-and-gateway.md](engine-and-gateway.md)
-for the gateway-binding detail and [process-daemon.md](process-daemon.md) for who actually spawns the
-worker PIDs (the engine never does).
+The whole point of the floor is ordering. The engine binds the port *before* anything else, reads
+early-boot (restart-tier) config from the compose + defaults it has already parsed, then starts the
+worker graph; each worker reads its effective config at runtime. The `configuration` worker is
+**optional** and is **not** auto-injected; if a runner declares it, it comes up like any other worker.
+The engine never spawns a PID; a runner does (see [process-daemon.md](process-daemon.md)). See
+[engine-and-gateway.md](engine-and-gateway.md) for the gateway-binding detail.
 
 ```mermaid
 flowchart TD
-    A["bare `iii` → run_serve (main.rs:222)<br/>or `iii up` → compose::up"] --> B
-    B["[1] PARSE worker-compose.yml<br/>expand ${VAR:default} over text (config.rs:47-76)<br/>read port, gateway, configuration, workers<br/>NO config.yaml read; NO worker-entry port scan"] --> C
+    A["bare `iii` → run_serve (main.rs:222) [engine only]<br/>or `iii --compose` / `iii worker compose up` → compose::up"] --> B
+    B["[1] PARSE worker-compose.yaml (active target)<br/>expand ${VAR:default} over text (config.rs:47-76)<br/>read port, gateway, workers (+ each worker's config:)<br/>NO config.yaml read; NO worker-entry port scan"] --> C
     C["[2] BIND gateway (the WS listener)<br/>engine.set_worker_manager_port(compose.port) (config.rs:679)<br/>TcpListener {host}:{port} (worker/mod.rs:121-131)<br/>apply compose.gateway.rbac<br/>━ port open; nothing else started ━"] --> D
-    D["[3] BOOT-READ restart-tier config OFF DISK (B3, b38a5646)<br/>read ./data/configuration/&lt;id&gt;.yaml (dir from B2)<br/>expand ${VAR}; catch_unwind bad value → fall back to compiled default<br/>init logging/tracing<br/>━ happens BEFORE the store worker is up ━"] --> E
-    E["[4] START the `configuration` worker (mandatory; auto-injected §10)<br/>adapter=fs at compose.configuration.directory (B2)<br/>prime in-memory store from disk (configuration.rs:66-107)<br/>━ configuration::{register,set,get,list,schema} now live ━"] --> G
-    G["[5] START remaining workers in depends_on order<br/>each spawned by the process-daemon, NOT the engine<br/>(orchestrated by worker-ops compose::up; see process-daemon.md)<br/>worker connects over WS → RBAC handshake → WorkerRegistered"] --> H
-    H["[6] WORKERS REGISTER + FETCH CONFIG at runtime<br/>on initialize(): configuration::register(id, schema, initial_value) then configuration::get{id} → env-expanded value<br/>register_config_trigger to hot-reload on configuration:updated (#1860)<br/>━ the store, not a file, is the runtime source of truth ━"] --> I
+    D["[3] RESOLVE early-boot (restart-tier) config from the already-parsed compose + defaults (B3)<br/>effective = worker defaults.yaml ◁ compose config: (◁ target overlay)<br/>expand ${VAR}; catch_unwind bad value → fall back to defaults.yaml<br/>init logging/tracing<br/>━ no separate disk store read; the values are already in memory ━"] --> G
+    G["[5] START workers in depends_on order (none are auto-injected; runs only what compose declares)<br/>each spawned by a runner (e.g. the process-daemon), NOT the engine<br/>(orchestrated by worker-ops compose::up; see process-daemon.md)<br/>worker connects over WS → RBAC handshake → WorkerRegistered"] --> H
+    H["[6] WORKERS READ CONFIG at runtime<br/>effective value = defaults.yaml ◁ compose config: (◁ target). If the OPTIONAL configuration worker is present,<br/>read via configuration::get{id} (env-expanded) and tell it which compose file you started from<br/>register_config_trigger to hot-reload on configuration:updated (#1860)<br/>━ the compose file (+ defaults.yaml), not a ./data store, is the source of truth ━"] --> I
     I["[7] WATCH for changes<br/>compose-file watcher: topology change → reconcile worker set<br/>configuration trigger fan-out: value change → live hot-reload<br/>  or log 'applies at next start' (restart-tier)"]
 ```
 
 Key inversions vs today:
 
 - **B1 is one top-level field**, not a worker-entry scan (`config.rs:672-679` deleted).
-- **The port binds before the configuration worker starts** — correct, because the gateway is the
-  *transport* the store is reached over.
-- **Restart-tier config is read off disk (step 3) before the store worker is up (step 4)** — the only
-  way to break the cycle for logging-init-tier values. This is exactly what b38a5646 already does.
+- **The port binds before any worker starts**, correct, because the gateway is the *transport* the
+  `configuration` worker (when present) is reached over.
+- **Early-boot config is read from the already-parsed compose + defaults (step 3)**, not from a
+  separate `./data` store and not after a store worker comes up; there is no store worker to wait for.
+- **The `configuration` worker is optional and never auto-injected.** iii runs with zero workers; if
+  no `configuration` worker is declared, config is static (`defaults.yaml` ◁ compose, resolved at
+  start) and there is no runtime hot-reload path.
 
 ---
 
@@ -138,45 +156,49 @@ Key inversions vs today:
 
 Every worker entry in `engine/config.yaml` (plus the canonical `iii-worker-manager` port holder,
 which lives in cloud configs like `registry/api/iii-config-production.yaml`). Destinations:
-**(a)** → `worker-compose.yml`; **(b)** → `configuration` store; **(c)** → deleted; **(d)** → engine
-flag/env.
+**(a)** → compose top-level (bootstrap); **(b)** → the worker's per-worker compose `config:` block
+(over its `defaults.yaml`); **(c)** → deleted; **(d)** → engine flag/env. Per-worker `config:` blobs
+are **carried into** the compose `config:` block, not dropped and not into a store.
 
 | config.yaml entry (file:line) | What its `config:` holds | Dest | Exact placement |
 |---|---|---|---|
-| `iii-worker-manager` (port holder; `WorkerManagerConfig` `worker/mod.rs:52-66`) | `port`, `host`, `rbac`, `middleware_function_id` | **(a)+(c)** | `port` → compose top-level `port:` (B1). `host`/`rbac`/`middleware_function_id` → compose `gateway:`. The *worker entry itself is **deleted*** — the gateway is baked into the engine (see [engine-and-gateway.md](engine-and-gateway.md)); it is no longer a YAML worker. |
-| `configuration` (`config.yaml` L148-156; `ConfigurationModuleConfig` `configuration/config.rs:13-25`) | `adapter{fs, directory}`, `ttl_seconds` | **(a)** | `adapter`/`directory`/`ttl_seconds` → compose `configuration:` block (B2). The store cannot hold its own location. |
-| `iii-observability` (`config.yaml` L23) | `enabled`, `service_name`, `exporter`, `endpoint`, sampling, metrics, logs | **(b), restart-tier** | Store id `iii-observability`. The logging/trace slice is **boot-read off disk** (B3, already shipped b38a5646). The worker registers its own schema + initial value at boot; runtime tuning lives in the store. No compose config. |
-| `iii-state` (`config.yaml` L15) | `adapter{kv,file_path}` | **(b) — DONE** | Already migrated (#1860). Store id `iii-state`. `adapter` is restart-tier; live fields apply instantly. The worker registers its own schema + initial value at boot; no compose config. |
-| `iii-stream` (`config.yaml` L2) | `port`, `host`, `adapter{redis/kv}` | **(b)** | Store id `iii-stream`. **`iii-stream.port` (3112) is a DATA-PLANE per-worker port, NOT the bootstrap gateway port** — it goes to the store, not compose top-level. (Restart-tier: a rebind needs worker restart.) |
-| `iii-queue` (`config.yaml` L131) | `adapter{redis}` | **(b)** | Store id `iii-queue`. Pure per-worker. |
-| `iii-pubsub` (`config.yaml` L138) | `adapter{local}` | **(b)** | Store id `iii-pubsub`. |
-| `iii-cron` (`config.yaml` L143) | `adapter{kv}` | **(b)** | Store id `iii-cron`. |
-| `iii-http` (`config.yaml` L200) | `port: 3111`, `host`, `default_timeout`, `concurrency_request_limit`, `cors` | **(b)** | Store id `iii-http`. **The HTTP ingress port is data-plane per-worker config (restart-tier), NOT the bootstrap gateway port** → store, not compose top-level. |
-| `iii-bridge` (`config.yaml` L158) | remote `url`, `service_id`, forward/expose | **(b)** | Store id `iii-bridge`. Per-worker. |
-| `iii-sandbox` (`config.yaml` L176) | `image_allowlist`, idle timeout, cpus, memory, custom_images | **(b)** | Store id `iii-sandbox`. (Sandbox-runtime defaults; runtime mapping in the sandbox spec.) |
+| `iii-worker-manager` (port holder; `WorkerManagerConfig` `worker/mod.rs:52-66`) | `port`, `host`, `rbac`, `middleware_function_id` | **(a)+(c)** | `port` → compose top-level `port:` (B1). `host`/`rbac`/`middleware_function_id` → compose `gateway:`. The *worker entry itself is **deleted*** (the gateway is baked into the engine, see [engine-and-gateway.md](engine-and-gateway.md)); it is no longer a YAML worker. |
+| `configuration` (`config.yaml` L148-156; `ConfigurationModuleConfig` `configuration/config.rs:13-25`) | `adapter{fs, directory}`, `ttl_seconds` | **(c)** | **Deleted.** There is no store-location to migrate: the compose file (+ `defaults.yaml`) is the persistence. If a runner wants the optional `configuration` worker, it declares it like any other worker (no top-level block). |
+| `iii-observability` (`config.yaml` L23) | `enabled`, `service_name`, `exporter`, `endpoint`, sampling, metrics, logs | **(b), restart-tier** | `workers.iii-observability.config:` over its `defaults.yaml`. The logging/trace slice is **early-boot** (B3), resolved at the floor from the already-parsed compose + defaults. |
+| `iii-state` (`config.yaml` L15) | `adapter{kv,file_path}` | **(b), externalized** | Already externalized via `configuration::*` (#1860). `workers.iii-state.config:` over its `defaults.yaml`. `adapter` is restart-tier; live fields apply instantly. |
+| `iii-stream` (`config.yaml` L2) | `port`, `host`, `adapter{redis/kv}` | **(b)** | `workers.iii-stream.config:`. **`iii-stream.port` (3112) is a DATA-PLANE per-worker port, NOT the bootstrap gateway port**, so it is a `config:` value, not compose top-level `port`. (Restart-tier: a rebind needs worker restart.) |
+| `iii-queue` (`config.yaml` L131) | `adapter{redis}` | **(b)** | `workers.iii-queue.config:`. Pure per-worker. |
+| `iii-pubsub` (`config.yaml` L138) | `adapter{local}` | **(b)** | `workers.iii-pubsub.config:`. |
+| `iii-cron` (`config.yaml` L143) | `adapter{kv}` | **(b)** | `workers.iii-cron.config:`. |
+| `iii-http` (`config.yaml` L200) | `port: 3111`, `host`, `default_timeout`, `concurrency_request_limit`, `cors` | **(b)** | `workers.iii-http.config:`. **The HTTP ingress port is data-plane per-worker config (restart-tier), NOT the bootstrap gateway port** → `config:`, not compose top-level. |
+| `iii-bridge` (`config.yaml` L158) | remote `url`, `service_id`, forward/expose | **(b)** | `workers.iii-bridge.config:`. Per-worker. |
+| `iii-sandbox` (`config.yaml` L176) | `image_allowlist`, idle timeout, cpus, memory, custom_images | **(b)** | `workers.iii-sandbox.config:`. (Sandbox-runtime defaults; runtime mapping in the sandbox spec.) |
 | `iii-exec` (`registry/api/iii-config*.yaml`; `ExecConfig{watch,exec}` `shell/config.rs:9-14`) | `watch`, `exec: [cmd…]` | **(c) from config.yaml; capability → process-daemon** | The `iii-exec` *engine builtin* is deleted. `exec: [cmd]` → a compose worker with `scripts.start`; `watch:` → a daemon-level watch via `process::start{spec, watch}`. See §11 and [process-daemon.md](process-daemon.md). |
-| `modules:` top-level key (`config.rs:31`) | list of built-in workers | **(c)** | Folded into the single `workers:` map. The `modules`/`workers` split disappears; mandatory/default workers are injected (§10), not declared. |
-| `--config` engine flag (`main.rs:99-101`, default `config.yaml`) | path to boot file | **(d)** | Becomes `--compose worker-compose.yml` (default `worker-compose.yml`). `--config` keeps accepting `config.yaml` through the coexistence window (see [migration.md](migration.md)). `--use-default-config` → `--use-defaults`. |
-| `${VAR:default}` expansion (`config.rs:47-76`) | inline templating | **kept** | Reused for both compose file text and stored values (expand on read in `configuration::get`). |
+| `modules:` top-level key (`config.rs:31`) | list of built-in workers | **(c)** | Folded into the single `workers:` map. The `modules`/`workers` split disappears; nothing is auto-injected (§10), only what compose declares runs. |
+| `--config` engine flag (`main.rs:99-101`, default `config.yaml`) | path to boot file | **(d)** | Becomes `--compose worker-compose.yaml` (default `worker-compose.yaml`). `--config` keeps accepting `config.yaml` through the coexistence window (see [migration.md](migration.md)). `--use-default-config` → `--use-defaults`. |
+| `${VAR:default}` expansion (`config.rs:47-76`) | inline templating | **kept** | Reused for both compose file text and per-worker `config:` values (expand on read). |
 
-There is **no class (c) "stuck" config** beyond what design deletes (`iii-worker-manager` entry,
-`iii-exec` builtin, `modules`). Everything substantive is (a) bootstrap or (b) store; the only hard
-constraint was ordering (§2), now solved.
+The only deletions are the entries design retires (`iii-worker-manager` entry, the
+`configuration` store-location block, the `iii-exec` builtin, `modules`). Everything substantive is
+(a) bootstrap or (b) carried into the per-worker compose `config:` block over its `defaults.yaml`; the
+only hard constraint was ordering (§2), now reduced to the single `port` fact.
 
 `config.prod.yaml` / `iii-config-production.yaml` (`iii-http`, `iii-cron`, `iii-observability`,
-`iii-exec`) map the same way, as a thin `worker-compose.prod.yml` overlay (`-f` layering, §12.3). The
-cloud is the highest-stakes surface — see [migration.md](migration.md) for the cutover.
+`iii-exec`) map the same way, as a thin `worker-compose.prod.yaml` overlay (target layering, §12.3).
+The cloud is the highest-stakes surface; see [migration.md](migration.md) for the cutover.
 
 ---
 
 ## 6. `config-worker:<id>` resolution
 
 The scheme **does not exist today** (zero repo hits for `config-worker`/`config_worker`). It is
-net-new, built on existing primitives: `configuration::{register,set,get}` + the `fs` adapter's
-file-per-id + the id regex `[a-z0-9_-]{1,64}`.
+net-new, built on existing primitives: `configuration::{register,set,get}` + the id regex
+`[a-z0-9_-]{1,64}`. Its backing is now the **active `worker-compose.yaml`** (with the worker's
+`defaults.yaml` as the floor), mediated by the optional `configuration` worker, not a `./data` store.
 
-> **`config-worker` is a SCHEME, not a worker.** `config-worker:<id>` resolves to a
-> `ConfigurationEntry{id}` held by the **`configuration`** worker. No `config-worker` worker exists.
+> **`config-worker` is a SCHEME, not a worker.** `config-worker:<id>` is the addressing scheme for a
+> worker's config entry, resolved by the **`configuration`** worker against the active compose file.
+> No `config-worker` worker exists.
 
 ### 6.1 URI grammar
 
@@ -185,78 +207,92 @@ store-ref    ::=  "config-worker:" <id>     ; <id> matches [a-z0-9_-]{1,64}
                 | "config-worker://" <id>    ; equivalent, URL-ish form
 ```
 
-- `config-worker:<id>` is the **addressing scheme** for a store entry: it resolves to a
-  `ConfigurationEntry{id}` in the `configuration` store, where the entry id **is** the worker id.
-  Read = `configuration::get { id, raw:false }` (env-expanded); register/write =
-  `configuration::register`/`set`.
-- It is **not** a field anyone writes in compose, and there is **no** "default when omitted" — there
-  is no compose `config:` field at all. The store entry id is always the worker id, established by the
-  worker's own `configuration::register(id, …)` call at boot.
+- `config-worker:<id>` is the **addressing scheme** for a worker's config entry, where the entry id
+  **is** the worker id. Read = `configuration::get { id, raw:false }` (env-expanded); write =
+  `configuration::set` (writes back into the active compose file).
+- The **default when a worker's `config:` entry omits an explicit pointer is `config-worker:<workerid>`**:
+  a worker's config is addressed by its own id by default. The pointer form
+  (`config: { path: config-worker:<id> }` or `path: ./local.conf`) is the optional way to reference an
+  external source; inline `config:` in compose is the primary form.
 
 ### 6.2 Resolution
 
-The store id for a worker is simply the worker's id; `config-worker:<id>` resolves to
-`ConfigurationEntry{id}` inside the `configuration` worker. There is no compose pointer and no
-manifest pointer to resolve. Each worker registers its **own** schema + initial value at boot:
+The effective value for `config-worker:<id>` resolves against the **active compose file** (the
+worker's `config:` block) with the worker's `defaults.yaml` as the floor:
 
-```rust
-// at the worker's own initialize():
-configuration::register(worker_id, schema_from(self), initial_value);  // idempotent
-// thereafter the worker reads via configuration::get{ id: worker_id } and hot-reloads off the trigger
+```
+effective(id) = defaults.yaml(id) ◁ compose base config:(id) ◁ active target overlay config:(id)
 ```
 
-`register` is idempotent: it keeps an existing stored value rather than clobbering a value tuned at
-runtime. The store is the sole source of truth; there is no file-ref escape hatch and no merge with
-any compose or manifest config.
+Anything not overridden in compose falls back to `defaults.yaml`. When the optional `configuration`
+worker is present, it performs this resolution on `configuration::get` and, on `configuration::set`,
+writes the change back into whichever compose file the worker was started from (the worker tells it
+which compose file on start). It **never edits `defaults.yaml`**, and it **errors when no
+`worker-compose.yaml` is found**. When the `configuration` worker is absent, the same effective value
+is resolved statically at start (no runtime read/write path).
 
 ---
 
 ## 7. The config-value source + the env↔config orthogonality ruling
 
-### 7.1 The store value is the only config value
+### 7.1 The effective value = defaults.yaml ◁ compose ◁ target
 
-There is no config-value precedence ladder, because there is no manifest config and no compose seed to
-merge. At boot each worker calls `configuration::register(id, schema, initial_value)` with its **own**
-initial value. `register` is idempotent: it keeps an existing stored value rather than clobbering a
-value tuned at runtime, so re-running `up` (which restarts the worker) does not reset a value a user
-changed. At runtime there is exactly one source of truth — the store value, read via
-`configuration::get`. Runtime changes are made with `iii worker config set <id> …` (→
-`configuration::set`).
+The config-value precedence ladder has exactly three rungs, and config is a merged field like any
+other compose field:
 
-### 7.2 env↔config-store orthogonality (critique 02 #10)
+```
+effective = defaults.yaml ◁ compose base config: ◁ active target overlay config:
+```
 
-The env channel and the config-store channel are **two independent stacks resolved by
-different mechanisms at different times**: env is applied by the process-daemon at process launch;
-config is read by the worker at `initialize()`. A logical setting (`DB_PASSWORD`) can arrive via the
-env channel (`process.env.DB_PASSWORD`) *and* the config-store channel (`config.db_password`), and
-there is no global precedence between them — the winner depends on which one the worker code reads.
+The worker's shipped `defaults.yaml` is the floor; the per-worker `config:` block in the active
+`worker-compose.<target>.yaml` overrides it; anything not overridden falls back to `defaults.yaml`.
+At runtime there is one source of truth, the active compose file (with the `defaults.yaml` floor),
+read via `configuration::get` when the optional `configuration` worker is present. Runtime changes
+are made with `iii worker config set <id> …` (→ `configuration::set`), which writes the change back
+into the active compose file and **never** edits `defaults.yaml`. Because the change lands in the
+committed compose file, re-running `up` replays it (no reset of a tuned value).
+
+### 7.2 env↔config orthogonality (critique 02 #10)
+
+The env channel and the config channel are **two independent stacks resolved by different mechanisms
+at different times**: env is applied by the runner at process launch; config is the
+`defaults.yaml`-over-compose value the worker reads at `initialize()`. A logical setting
+(`DB_PASSWORD`) can arrive via the env channel (`process.env.DB_PASSWORD`) *and* the config channel
+(`config.db_password`), and there is no global precedence between them; the winner depends on which
+one the worker code reads.
 
 **Ruling: env namespace ≠ config keys. They are orthogonal namespaces, not a single merged
 hierarchy.**
 
 - **env channel** is for process-launch and secrets (`environment:`, `env_file`, host env).
-- **config-store channel** is for application settings (`configuration::get`).
+- **config channel** is for application settings (the compose `config:` block over `defaults.yaml`,
+  read via `configuration::get`).
 - A key appearing in *both* channels is a **lint warning at `up`** (`W0xx duplicate setting 'X' in
-  both env and config-store; they are independent — the worker chooses which it reads`). The spec does
-  not silently merge them.
+  both env and config; they are independent, the worker chooses which it reads`). The spec does not
+  silently merge them.
 
 Env-precedence detail (host env > inline `environment:` > `env_file[n]` > … > `env_file[0]`,
 **later-listed env_file wins**) is owned by [worker-compose.md](worker-compose.md). Secret-specific
 handling lives in [secrets.md](secrets.md).
 
-### 7.3 Secret-tagged entries (the store-side contract)
+### 7.3 Secret-tagged entries (the config-side contract)
 
-`secrets.md` requires one net-new field on the store's entry shape, owned here: `ConfigurationEntry`
-gains an optional **`secret: bool`** (default `false`). The store contract for a secret-tagged entry:
+`secrets.md` requires one net-new field on the config entry shape, owned here: `ConfigurationEntry`
+gains an optional **`secret: bool`** (default `false`). The contract for a secret-tagged entry:
 
 - `configuration::register` / `configuration::set` accept and **preserve** the `secret` flag (setting a
   value on a secret-tagged id keeps it secret; the flag is sticky once set).
 - Every **read path** redacts a secret value to `***` unless the caller passes an explicit
-  `reveal: true` argument: `configuration::get { id, reveal? }`, `configuration::list` (always redacts —
+  `reveal: true` argument: `configuration::get { id, reveal? }`, `configuration::list` (always redacts,
   it is a listing), the `configuration:updated` trigger payload (redacted; subscribers that need the
-  real value call `get { reveal: true }`), and `iii worker config` / `iii worker info` /
-  `iii ps` output. `--reveal` on the CLI is tty-gated. See [secrets.md](secrets.md) for the threat model
-  and the `env_file`-not-persisted rule.
+  real value call `get { reveal: true }`), and `iii worker config` / `iii worker info` output.
+  `--reveal` on the CLI is tty-gated.
+
+**Crucial consequence of the new model:** config now persists in the **committed `worker-compose.yaml`**
+(that is where `configuration::set` writes), so secret values **must not be inline** in `config:`.
+Secrets ride `env_file` + `${VAR}` (with the `secret: true` redaction tag marking which config keys
+reference them); see [secrets.md](secrets.md) for the threat model and the `env_file`-not-persisted
+rule.
 
 ---
 
@@ -264,88 +300,85 @@ gains an optional **`secret: bool`** (default `false`). The store contract for a
 
 A worker's config has two tiers, and **every config field must be tagged**:
 
-- **LIVE** — applies instantly via the `configuration` trigger fan-out (no restart). The hot path
-  reads an `Arc`-swapped snapshot.
-- **RESTART** — applies only at next worker start. The value is **boot-read off disk** (B3) for
-  early-boot consumers; for ordinary workers, a runtime change logs `"applies at next start"`.
+- **LIVE**: applies instantly via the `configuration` trigger fan-out (no restart). The hot path
+  reads an `Arc`-swapped snapshot. (Requires the optional `configuration` worker to be present; absent
+  it, all config is effectively static at start.)
+- **RESTART**: applies only at next worker start. The value is **resolved at the floor** from the
+  already-parsed compose + defaults (B3) for early-boot consumers; for ordinary workers, a runtime
+  change logs `"applies at next start"`.
 
 **Template: the `iii-state` #1860 / `iii-observability` b38a5646 pattern.**
 
 1. The worker's `*ModuleConfig` derives `#[derive(JsonSchema)]` with doc comments → the schema flows
    into `configuration::register`.
-2. On `initialize()`: the worker calls `configuration::register(id, schema, initial_value)` with its
-   own schema + initial value (idempotent — keeps an existing stored value), then
-   `register_config_trigger` to watch changes.
+2. On `initialize()`: the worker calls `configuration::register(id, schema, defaults)` with its
+   own schema + the values from its `defaults.yaml` (idempotent; compose `config:` overrides them),
+   tells the configuration worker which compose file it started from, then `register_config_trigger`
+   to watch changes.
 3. Live `config_snapshot()` (`Arc`-swapped) is read on the hot path; LIVE fields
    (`iii-state`'s `triggers_enabled`, `max_value_bytes`, `save_interval_ms`) apply instantly; RESTART
-   fields (`iii-state`'s `adapter`) log "applies at next start" and are boot-read from the persisted
-   entry.
-4. `normalized()` re-clamps out-of-range values even for hand-edited persisted files, so a corrupt
-   disk value cannot brick the worker.
+   fields (`iii-state`'s `adapter`) log "applies at next start".
+4. `normalized()` re-clamps out-of-range values even for hand-edited compose files, so a corrupt
+   value cannot brick the worker.
 
-**Requirement:** each migrated worker (the §5 (b) rows) must declare a per-field `LIVE`/`RESTART`
-tag, following this template. Data-plane ports (`iii-stream.port`, `iii-http.port`) are RESTART. This
+**Requirement:** each externalized worker (the §5 (b) rows) must declare a per-field `LIVE`/`RESTART`
+tag, following this template. The value source is the active compose file (with the `defaults.yaml`
+floor), not a `./data` store. Data-plane ports (`iii-stream.port`, `iii-http.port`) are RESTART. This
 is the per-worker contract the spec requires before a worker is moved off config.yaml.
 
 ---
 
-## 10. `configuration` as a hard, auto-injected dependency
+## 10. `configuration` is OPTIONAL (not mandatory, not auto-injected)
 
-**Rule: the `configuration` worker is mandatory and auto-injected. It is never required to be
-declared in `worker-compose.yml`, and it cannot be removed.** It is the implicit, always-ready root
-of every `depends_on` graph (critique 02 #6).
+**Rule: the `configuration` worker is OPTIONAL. It is NOT mandatory, NOT auto-injected, and NOT an
+always-ready root of the `depends_on` graph. `up` does NOT hard-fail without it.** iii runs with
+**zero workers**, including no `configuration` worker (review comment #7). Without it, config is
+**static**: the effective value is `defaults.yaml` ◁ compose, resolved at start, and there is no
+runtime read/write/hot-reload path.
 
-Mechanism (already in code):
+What it is, when present:
 
-- `configuration` is registered `mandatory` (`configuration.rs:455` —
-  `crate::register_worker!("configuration", ConfigurationWorker, mandatory);`). At build, the engine
-  appends any mandatory inventory worker not already listed (`config.rs:651-659`). So even an empty
-  `workers:` map yields a running configuration worker. **Keep this.**
-- This mirrors `ensure_builtin_daemons()` injecting `iii-worker-ops` (`config.rs:131-155`). The
-  worker list is *already* "overlay, not full replacement."
+- A **read/update layer over the active `worker-compose.yaml`**. On `configuration::get` it resolves
+  the effective value (`defaults.yaml` ◁ compose base ◁ target). On `configuration::set` it writes the
+  change back into whichever compose file the worker was started from (the worker tells it which
+  compose file on start). It **never edits `defaults.yaml`**, and it **errors when no
+  `worker-compose.yaml` is found**.
+- It reuses the `configuration::{register,set,get,list,schema}` surface already live for the
+  externalized workers (`iii-state` #1860, `iii-observability` b38a5646); only the backing changes
+  (compose file + `defaults.yaml`, not a `./data/configuration` store).
 
-Precise auto-inject rules:
+What it is NOT (everything below is deleted vs the old model):
 
-1. **If compose omits `configuration:`** → auto-inject `adapter: fs`, `directory:` = the default
-   `./data/configuration`. The store location (B2) is read from the top-level `configuration:` block,
-   not from a `workers.configuration` entry — they are the same thing, declared once at top level.
-2. **If a user declares `workers.configuration`** → it may override only the adapter/directory (it
-   merges into the top-level block); it cannot be disabled. On conflict, top-level `configuration:`
-   wins (it is the bootstrap source).
-3. **`bridge` adapter** (delegate to a remote engine's store) → honored; the bridge target is itself
-   bootstrap (you must know where the remote store is before reading config), so it lives in the
-   compose `configuration:` block, not in the store.
-4. **Gateway/port and the store are co-mandatory** (both are floor). The engine refuses to boot if it
-   cannot bind the port or create the store directory (fail fast, matching today's `config_file`
-   NotFound error, `config.rs:88-96`).
+- It is **not** registered `mandatory` and the engine does **not** append it to the worker set. The
+  old `register_worker!("configuration", …, mandatory)` mandatory-injection (`configuration.rs:455`,
+  `config.rs:651-659`) is dropped for this worker; an empty `workers:` map yields an engine with **no
+  workers running at all**.
+- There is **no** top-level `configuration:` store-location block to inject (`adapter`/`directory`):
+  there is no store of record. A runner that wants the worker declares it like any other worker.
+- It is **not** a co-mandatory floor with the gateway. The only floor is the `port` (§2). The engine
+  refuses to boot only if it cannot bind the port (fail fast, matching today's `config_file` NotFound
+  error, `config.rs:88-96`); a missing `configuration` worker is not a boot failure.
+- `depends_on: [configuration]` is **not** a free always-ready target. If a worker depends on
+  `configuration`, that dependency is gated like any other (the worker must be declared and become
+  available); it is not auto-satisfied.
 
-**Failure mode — `configuration` never readies.** Because it is the floor, this is a **hard fail**:
-`up` aborts the entire graph with `E0xx configuration store failed to start (<cause>); cannot boot`,
-non-zero exit. It is *not* a skippable subtree. It is also a valid (no-op, always-ready)
-`depends_on` target — a user worker that lists `depends_on: [configuration]` validates OK and is
-gated only on the always-ready root, never an `unknown id` error (critique 02 #12). The same applies
-to the auto-injected `iii-worker-ops` and the process-daemon.
-
-**Minimal valid `worker-compose.yml`:** just `port: 49134` — or even empty (all defaults). The
-`configuration` worker, the gateway, and `iii-worker-ops` are all auto-present. The user declares only
-the workers they add:
+**Minimal valid `worker-compose.yaml`:** just `port: 49134`, or even empty (port defaults to
+`49134`). No worker is auto-present. The user declares only the workers they add:
 
 ```yaml
 version: "1"
 port: 49134
-configuration:
-  adapter: fs
-  directory: ./data/configuration       # B2 — the store's own location
 
 workers:
   math-worker:
     runtime: { workspace: ./workers/math-worker }
     scripts: { install: npm install, start: npm run dev }
-    # no config here — the worker registers its own schema + initial value at boot
+    config:                                # overrides the worker's defaults.yaml; optional
+      precision: 8
 
   iii-state:
     runtime: { package: workers.iii.dev/iii-state:latest }
-    # config lives entirely in the store, keyed by the worker id (migrated)
+    config: { adapter: kv }                # over its defaults.yaml; resolved statically if no configuration worker
 
   registry-api:                            # the old iii-exec use-case (§11)
     runtime: { workspace: ./registry/api }
@@ -353,11 +386,11 @@ workers:
     env_file: [./registry/api/.env]
 ```
 
-Not present (and why): no `iii-worker-manager` (baked in, port hoisted), no `configuration` worker
-*entry* (auto-injected, location at top level), no `iii-worker-ops` (auto-injected,
-`config.rs:135`), **no per-worker config in compose at all** — no seed and no pointer; every worker's
-config lives in the store, registered by the worker itself at boot. No `iii-exec` (became
-`registry-api` with `scripts.start`).
+Not present (and why): no `iii-worker-manager` (baked in, port hoisted); no top-level
+`configuration:` store-location block (there is no store); no auto-injected `configuration` worker (it
+is optional, declared only if wanted); no `iii-exec` (became `registry-api` with `scripts.start`).
+Per-worker config lives in each worker's `config:` block over its `defaults.yaml`; if a runner wants
+runtime read/update/hot-reload it adds the `configuration` worker, otherwise config is static.
 
 ---
 
@@ -400,16 +433,16 @@ cloud cutover are in [migration.md](migration.md).
 ### 12.1 CLI
 
 ```
-iii migrate [--in config.yaml] [--out worker-compose.yml]
+iii migrate [--in config.yaml] [--out worker-compose.yaml]
             [--dry-run]      # print the diff, write nothing
             [--keep]         # leave config.yaml in place (default: rename to config.yaml.bak)
 ```
 
 Backing function: `migrate::config_yaml { input_path, output_path, dry_run } -> MigrationReport`.
 
-`migrate` emits **only runtime/topology** into `worker-compose.yml`. It does **not** touch config:
-there is no compose `config:` pointer to emit and it does **not** seed the store. Workers re-register
-their own defaults at boot; operators re-apply any tuned values afterward with `iii worker config set`.
+`migrate` emits runtime/topology **and** per-worker config into `worker-compose.yaml`: each worker's
+`config:` blob from config.yaml is **carried into** the worker's compose `config:` block (over its
+`defaults.yaml`), not dropped and not into a store. Nothing tuned is lost on migration.
 
 ### 12.2 Algorithm
 
@@ -420,65 +453,74 @@ their own defaults at boot; operators re-apply any tuned values afterward with `
      port       ← the iii-worker-manager entry's WorkerManagerConfig.port (config.rs:672-679 logic),
                   else DEFAULT_PORT.
      gateway.{host,rbac,middleware_function_id} ← same entry.
-     configuration.{adapter,directory,ttl_seconds} ← the `configuration` entry's
-                  ConfigurationModuleConfig (configuration/config.rs:13-25), else ./data/configuration.
-3. For each remaining worker W (skip iii-worker-manager — deleted; skip auto-injected
-   iii-worker-ops — re-injected at boot, §10):
-     • Emit compose workers.<id> — runtime/topology only:
+     (No configuration store-location to extract: there is no top-level configuration: block.)
+3. For each remaining worker W (skip iii-worker-manager, deleted; skip iii-worker-ops):
+     • Emit compose workers.<id>, runtime/topology AND config:
          - id = W's assigned instance id (reuse assign_instance_ids dedup, config.rs:418-428)
          - runtime: W.image → runtime.package, else detect local → runtime.workspace
-         - NO config: emitted. Any `config:` blob W carried in config.yaml is DROPPED — per-worker
-           config is owned end-to-end by the worker's own configuration::register at boot. (Note the
-           dropped value in the report so operators can re-apply it with `iii worker config set`.)
-     • Special-case iii-exec: ExecConfig.exec → a compose worker with scripts.start (§11); drop it.
-4. Write worker-compose.yml. Rename config.yaml → config.yaml.bak (unless --keep).
-5. Return MigrationReport { workers_migrated, dropped_config[], warnings[], unmapped[] }.
+         - config: ← W's `config:` blob from config.yaml is CARRIED INTO workers.<id>.config:
+           (over the worker's defaults.yaml). Record it in the report's carried_config[].
+     • Special-case iii-exec: ExecConfig.exec → a compose worker with scripts.start (§11); drop the
+       builtin entry.
+4. Write worker-compose.yaml. Rename config.yaml → config.yaml.bak (unless --keep).
+5. Return MigrationReport { workers_migrated, carried_config[], warnings[], unmapped[] }.
 ```
 
 ### 12.3 Layering / overlays (replaces config.prod.yaml)
 
-Support `-f` layering: `iii up -f worker-compose.yml -f worker-compose.prod.yml`. Later files
-deep-merge over earlier (reuse `deep_merge`, `config_file.rs:378-405`). `config.prod.yaml` /
+Support target overlays: `iii worker compose up -f worker-compose.yaml -f worker-compose.prod.yaml`.
+Later files deep-merge over earlier (reuse `deep_merge`, `config_file.rs:378-405`), including the
+`config:` blocks (`defaults.yaml` ◁ base ◁ target). `config.prod.yaml` /
 `iii-config-production.yaml`'s thin override set (`iii-http`, `iii-cron`, `iii-observability`,
-`iii-exec`) becomes a `worker-compose.prod.yml` overlay. `migrate` emits both when both inputs exist.
+`iii-exec`) becomes a `worker-compose.prod.yaml` overlay. `migrate` emits both when both inputs exist.
 
 ### 12.4 Fidelity caveats (stated honestly)
 
-- `config:` blobs in config.yaml are **dropped** by migrate, not carried into compose. Each worker
-  re-registers its own schema + initial value at boot via `configuration::register`. Any value an
-  operator had tuned away from the worker's default must be re-applied with `iii worker config set`
-  (migrate lists the dropped blobs in `dropped_config[]` so nothing is silently lost).
+- `config:` blobs in config.yaml are **carried into** the worker's compose `config:` block (over its
+  `defaults.yaml`), so a value an operator had tuned away from the worker's default survives migration
+  verbatim. `migrate` lists the carried values in `carried_config[]` for review.
+- Secrets must not migrate inline: if a carried `config:` value is a literal secret, `migrate` warns
+  and leaves it referencing `${VAR}` rather than writing the literal into the committed compose file
+  (see [secrets.md](secrets.md)).
 - `iii.lock` and per-worker `iii.worker.yaml` are **orthogonal** and untouched by migrate. Compose
   subsumes config.yaml's worker-list role only.
 - config.yaml comments are not preserved (the worker-list role moves to a new YAML we write). Compose
-  comments *are* preserved (it is a new YAML we write).
+  comments *are* preserved (it is a new YAML we write, and `configuration::set` round-trips it
+  format-preservingly, README OQ-9).
 
 ---
 
-## 13. Relative-path resolution & per-project namespacing
+## 13. Relative-path resolution & per-compose namespacing
 
-**`configuration.directory` resolves relative to the COMPOSE FILE'S
-directory, not the CWD of whoever ran `up`** (critique 02 #16). Resolving against CWD is a hazard:
-running `iii up` from a subdirectory would create a *second* empty store and the worker would read
-empty config. Anchoring to the compose-file dir makes `up` location-independent.
+Config lives **in the compose file itself** (the per-worker `config:` blocks over each worker's
+`defaults.yaml`); there is no `./data/configuration` store directory to anchor. The remaining
+relative-path rule is about local files a compose entry references:
 
-This ties directly to the multi-engine case (critique 02 #5): two projects on one machine, each with
-its own `worker-compose.yml`, must not share `./data/configuration`. Because the directory is anchored
-to each compose file's dir, the two stores are naturally distinct. The process-daemon keys its
-process table by project/port for the same reason — **how the daemon namespaces per project to avoid
-`compose_id` collisions across projects is owned by [process-daemon.md](process-daemon.md)**; this
-file's contribution is the anchoring rule that keeps the two stores separate by construction.
+**Relative paths in a compose file resolve relative to the COMPOSE FILE'S directory, not the CWD of
+whoever ran `up`** (critique 02 #16). This covers `runtime.workspace`, `env_file[*]`, and any
+`config.path` that points to a local file (the `path: ./local.conf` pointer form). Resolving against
+CWD is a hazard: running `up` from a subdirectory would resolve a worker's workspace or env_file
+against the wrong directory. Anchoring to the compose-file dir makes `up` location-independent.
+
+This gives **per-compose scoping** for free (critique 02 #5): two projects on one machine, each with
+its own `worker-compose.yaml`, never collide, because each worker's config is the merge of its own
+`defaults.yaml` and its own compose `config:` block, and any local paths resolve against that compose
+file's directory. The process-daemon keys its process table by project/port for the same reason; **how
+the daemon namespaces per project to avoid `compose_id` collisions is owned by
+[process-daemon.md](process-daemon.md)**; this file's contribution is the per-compose-file scoping of
+config (compose + defaults) and the compose-file-relative path anchoring.
 
 ---
 
 ## Open questions
 
-1. **`ttl_seconds` placement.** Routed to the compose `configuration:` block (§3) for simplicity, but
-   it is runtime-tunable in spirit. Options: (a) compose-only (current recommendation — it is a
-   store-wide knob, not a per-entry value, and is read when the store starts); (b) move to a store
-   meta-entry so it is hot-tunable. **Recommended default: (a).**
-2. **macOS / multi-engine store anchoring vs the daemon's project key.** §13 anchors the store to the
-   compose-file dir; [process-daemon.md](process-daemon.md) keys the process table by project/port.
-   These must agree on what "project identity" is (compose-file path? its parent dir? an explicit
-   `project:` field?). **Lead author (README.md) must pick one canonical project-identity key** and
-   apply it to both the store directory anchoring and the daemon's table namespacing.
+1. **Comment/format preservation on `configuration::set`.** The `configuration` worker now writes
+   runtime changes back into the human-authored `worker-compose.yaml`, so a destructive re-serialize
+   would churn comments and formatting. Recommendation: a format-preserving YAML editor on the
+   write-back path (README OQ-9). **Recommended default: preserve comments/formatting on round-trip.**
+2. **Per-compose project identity (anchoring vs the daemon's project key).** §13 scopes config per
+   compose file and resolves local paths against the compose-file dir;
+   [process-daemon.md](process-daemon.md) keys the process table by project/port. These must agree on
+   what "project identity" is (compose-file path? its parent dir? an explicit `project:` field?).
+   **Lead author (README.md) must pick one canonical project-identity key** and apply it to both the
+   path anchoring and the daemon's table namespacing.

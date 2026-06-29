@@ -2,15 +2,20 @@
 
 Worker id: `iii-process-daemon` · Function namespace: `process::*`
 
-This file specifies `iii-process-daemon`: the single long-lived process that is the **direct
-parent of every host PID `iii` ever runs**. It exists for one reason — to make orphans and
-zombies impossible *by construction* — and it does so by deleting every detach-and-forget
-spawn path in the codebase and replacing it with one reaping parent. This file covers the
-spawn/stop primitive, the supervision tiers ("what watches the watcher"), the zombie
-root-cause→fix table, the `process::*` function surface, log capture, crash recovery, and the
-honest platform/edge-case rulings. Orchestration of the compose *graph* lives elsewhere — see
-[worker-compose.md](worker-compose.md) and [cli-and-functions.md](cli-and-functions.md); the
-daemon only ever starts/stops/reaps *one process at a time* on instruction.
+This file specifies `iii-process-daemon`: the long-lived process that is the **direct
+parent of every host PID it spawns**. It is the **local supervisor** for whatever process ran
+`iii worker compose up`, and it is **one runner option among many** (docker, systemd/launchd, a
+bash script, a tmux session, or by hand). The engine manages nothing; a worker may instead be
+supervised by any of those other runners or be remote, and those workers are observe-only to
+iii (the daemon does not claim them). The daemon exists for one reason (to make orphans and
+zombies impossible *by construction* for the workers it itself spawns), and it does so by
+deleting every detach-and-forget spawn path in the codebase and replacing it with one reaping
+parent. This file covers the spawn/stop primitive, the supervision tiers ("what watches the
+watcher"), the zombie root-cause→fix table, the `process::*` function surface, log capture,
+crash recovery, and the honest platform/edge-case rulings. Orchestration of the compose *graph*
+lives elsewhere (see [worker-compose.md](worker-compose.md) and
+[cli-and-functions.md](cli-and-functions.md)); the daemon only ever starts/stops/reaps *one
+process at a time* on instruction.
 
 ---
 
@@ -18,20 +23,27 @@ daemon only ever starts/stops/reaps *one process at a time* on instruction.
 
 A **zombie** is a dead child whose parent is alive but never called `wait()`. An **orphan** is
 a live process re-parented to init because its launcher exited. Today `iii` produces both, and
-not by accident — it produces them *by design*:
+not by accident; it produces them *by design*:
 
 > Every worker spawn path deliberately `setsid()`-detaches the child, the launcher returns `0`,
 > and the PID is handed off to a **pidfile on disk** that the next CLI invocation re-reads.
 > Nothing holds a live parent→child link, so nobody is positioned to `wait()`/reap, and
 > liveness is reconstructed by `kill(pid,0)` polling plus `ps`/`/proc` cmdline scans against a
-> recycle-prone PID. — see [investigation 03 §2](#7-migration-out-of-iii-inventory).
+> recycle-prone PID. See [investigation 03 §2](#7-migration-out-of-iii-inventory).
 
-The structural fix is not a patch. It is to introduce **one process — `iii-process-daemon` —
-that is the direct parent of every host process `iii` runs** (binary workers, dev/OCI VM
+The structural fix is not a patch. It is to introduce **one process (`iii-process-daemon`)
+that is the direct parent of every host process it spawns** (binary workers, dev/OCI VM
 workers, source watchers, arbitrary exec pipelines), holds the authoritative in-memory process
-table, and reaps via `wait()`/`waitpid` *because it is the parent*. The only way to make an
-orphan or zombie — detach and drop the handle — is deleted everywhere. There is no longer any
-other code path in `iii` that calls `Command::spawn` for a managed worker.
+table, and reaps via `wait()`/`waitpid` *because it is the parent*. For the workers it spawns,
+the only way to make an orphan or zombie (detach and drop the handle) is deleted; there is no
+longer any other code path in `iii` that calls `Command::spawn` for a worker the daemon manages.
+
+This argument is bounded to **daemon-spawned** workers. A "running worker" is any process
+connected to the engine, started by anything: the daemon, docker, systemd/launchd, a bash
+script, a tmux session, by hand, or on a remote host. Workers the daemon did not spawn are
+supervised by their own managers and appear to iii as available, **observe-only** connections;
+the daemon does not claim them and does not reap them (§9). The engine itself manages and
+supervises nothing either way.
 
 We are not inventing the correct ownership model — it already exists in **two places** in the
 repo and works:
@@ -41,7 +53,7 @@ repo and works:
 | `external.rs::kill_child` | keeps the `Child`, `killpg(SIGTERM)` → 3s grace → `killpg(SIGKILL)` → `proc.wait()` | `engine/src/workers/external.rs:349-378` |
 | `shell/exec.rs::stop_process` | `setsid` group child, `killpg(SIGTERM)` → 3s → `killpg(SIGKILL)` → `child.wait()` (tested for "no zombie left") | `engine/src/workers/shell/exec.rs:241-325`, tests at `:344-454` |
 
-The daemon **generalizes these two functions to all process kinds** — and absorbs the
+The daemon **generalizes these two functions to all process kinds it spawns**, and absorbs the
 `iii-exec` engine builtin, whose `Exec` struct (`engine/src/workers/shell/exec.rs`) is already
 the right shape (spawn `sh -c`, group-kill, file-watch restart) but offers **zero callable
 functions** (`worker.rs:39` `register_functions` is empty). After this change there is exactly
@@ -51,19 +63,20 @@ one spawn primitive (`spawn_owned`) and one stop primitive (`stop_owned`), and t
 ### What the daemon does NOT do
 
 The daemon is deliberately *dumb about what it runs*. It does not decide what to run, resolve
-versions, read worker scripts, or speak the compose graph — those belong to `iii-worker-ops`
+versions, read worker scripts, or speak the compose graph; those belong to `iii-worker-ops`
 (see [cli-and-functions.md](cli-and-functions.md) and [worker-compose.md](worker-compose.md)).
-It does not own microVM images, OCI pull, catalog, or overlay — those stay in `iii-sandbox`
-(see [engine-and-gateway.md](engine-and-gateway.md) for the worker map). The daemon's entire
-job is: *be told to start a process spec, become its parent, keep it alive per policy, and reap
-it cleanly.*
+It does not own microVM images, OCI pull, catalog, or overlay; those stay in `iii-sandbox`
+(see [engine-and-gateway.md](engine-and-gateway.md) for the worker map). It does not claim,
+supervise, or reap any worker it did not itself spawn (docker/systemd/remote workers are their
+own runners' responsibility). The daemon's entire job is: *be told to start a process spec,
+become its parent, keep it alive per policy, and reap it cleanly.*
 
 ```mermaid
 flowchart TD
   OS["TIER 0 · OS init<br/>launchd / systemd / dev foreground"]
   ENG["ENGINE (iii)<br/>binds WS port from compose.port<br/>protocol · RBAC · connection registry · routing"]
   OPS["iii-worker-ops (THE BRAIN)<br/>compose graph · topo-sort · readiness<br/>compose::up calls process::start per node"]
-  DAE["iii-process-daemon (THE PID PARENT)<br/>spawn_owned · stop_owned · wait()-reap<br/>process table · logs · crash recovery"]
+  DAE["iii-process-daemon (LOCAL SUPERVISOR · one runner option)<br/>parent of the PIDs IT spawns · spawn_owned · stop_owned · wait()-reap<br/>process table · logs · crash recovery"]
   SBX["iii-sandbox (separate)<br/>libkrun __vm-boot · OCI · overlay · idle reaper"]
   HP["host process<br/>(binary worker)"]
   VM["__vm-boot VMM PID<br/>(VM worker)"]
@@ -90,17 +103,20 @@ engine — that decoupling is the whole point (§2).
 
 ## 2. The bottom turtle: what supervises the daemon
 
-"What manages the manager" is the crux question. If the daemon could itself be orphaned, we
-would just have moved the problem up one level. Three-tier answer:
+"What supervises the local runner's supervisor" is the crux question. If the daemon could
+itself be orphaned, we would just have moved the problem up one level. Three-tier answer (the
+tiers below describe the workers the daemon itself spawns; workers run under docker/systemd/bash/
+tmux/by-hand or on a remote host are supervised by their own runners, not by these tiers):
 
 ```
 TIER 0  OS init          launchd (macOS) / systemd user unit (Linux) / CLI foreground (dev)
             │  owns + restarts the daemon PID — the ONLY turtle below it
             ▼
-TIER 1  iii-process-daemon (separate long-lived process: `iii __process-daemon`)
-            │  direct parent of all host worker PIDs · wait()-reaps · process table
+TIER 1  iii-process-daemon, the local runner's supervisor (separate long-lived process: `iii __process-daemon`)
+            │  launched by whatever ran `iii worker compose up`; the engine does NOT own it
+            │  direct parent of the worker PIDs IT spawns · wait()-reaps · process table
             ▼
-TIER 2  every worker PID (host proc / __vm-boot VMM / watcher / exec pipeline)
+TIER 2  every worker PID the daemon spawned (host proc / __vm-boot VMM / watcher / exec pipeline)
 ```
 
 ### 2.1 Separate process, NOT in-engine (resolved decision)
@@ -134,13 +150,15 @@ process" — the daemon is not a second binary, it is a second process. See
   plist on macOS with `KeepAlive=true`, `systemd` user unit on Linux with `Restart=always`).
   The OS supervisor is the *only* thing that owns the daemon PID. On crash the OS restarts it;
   on restart it re-adopts (§8). This is the clean steady state.
-- **Dev / first-run (zero-config):** when no service unit exists, the **engine bootstraps the
-  daemon** the way it already auto-injects other builtins (`config.rs:131-155`
-  `ensure_builtin_daemons`). The engine launches `iii __process-daemon` ONCE via the **correct
-  `external.rs` path** — process-grouped (`setsid`), `Child` kept, `killpg`+`wait()` on
-  shutdown (`external.rs:280-378`) — so the daemon itself is *never* an orphan. If the engine
-  dies, the daemon keeps its children alive (it is their parent, not the engine) and waits for
-  the engine to reconnect (§8.3).
+- **Dev / first-run (zero-config):** when no service unit exists, the process that runs
+  `iii worker compose up` (or `iii --compose`) **bootstraps the daemon** as its local supervisor.
+  In dev this launch is convenience-wired through the same path that auto-injects other builtins
+  (`config.rs:131-155` `ensure_builtin_daemons`), launching `iii __process-daemon` ONCE via the
+  **correct `external.rs` path**: process-grouped (`setsid`), `Child` kept, `killpg`+`wait()` on
+  shutdown (`external.rs:280-378`), so the daemon itself is *never* an orphan. This is a launch
+  convenience, not ownership: the engine manages nothing, and once up the daemon outlives engine
+  hot-reload. If the engine dies, the daemon keeps its children alive (it is their parent, not the
+  engine) and waits for the engine to reconnect (§8.3).
 
 > **Why not just make the engine BE the daemon?** The engine is the *frequently-restarted
 > protocol host*; the daemon is the *long-lived process parent*. Coupling them reintroduces the
@@ -216,13 +234,24 @@ async fn spawn_owned(spec: &ProcSpec) -> Result<ProcHandle> {
 
 ```rust
 /// The ONLY stop path — generalized from exec.rs:241-325 + external.rs:kill_child.
-async fn stop_owned(entry: &mut ProcEntry, grace: Duration) {
+/// `grace` is a GraceTimeout: Finite(d) | Zero (immediate SIGKILL) | Inf (wait forever for
+/// the polite SIGTERM to take, never escalate). Inf and 0 are both valid per D6.
+async fn stop_owned(entry: &mut ProcEntry, grace: GraceTimeout) {
     let pgid = Pid::from_raw(entry.pgid as i32);
-    let _ = killpg(pgid, SIGTERM);                       // whole GROUP, polite
-    if timeout(grace, entry.child.wait()).await.is_err() {
-        let _ = killpg(pgid, SIGKILL);                   // whole group, forced
-        let _ = entry.child.wait().await;                // reap the leader — no zombie
+    match grace {
+        GraceTimeout::Zero => { let _ = killpg(pgid, SIGKILL); }   // immediate, no grace
+        GraceTimeout::Inf => {                                     // polite, wait forever
+            let _ = killpg(pgid, SIGTERM);
+            let _ = entry.child.wait().await;                      // never escalate to SIGKILL
+        }
+        GraceTimeout::Finite(d) => {
+            let _ = killpg(pgid, SIGTERM);                         // whole GROUP, polite
+            if timeout(d, entry.child.wait()).await.is_err() {
+                let _ = killpg(pgid, SIGKILL);                     // whole group, forced
+            }
+        }
     }
+    let _ = entry.child.wait().await;                              // reap the leader (no zombie)
     table.remove(&entry.id);
 }
 ```
@@ -237,6 +266,12 @@ Key invariants:
   orphaning grandchildren — `managed.rs:3016-3034` `kill_pid_with_grace` signals one PID today).
 - **Keep the `Child`, forever.** Never `drop(child)` after spawn (the sandbox launcher's bug at
   `adapters.rs:236`). The kept handle is what makes `wait()` succeed.
+- **Retry with capped exponential backoff is first-class (D6).** On a crash under a restarting
+  `RestartPolicy`, the daemon re-spawns via `spawn_owned` on a **capped exponential backoff**
+  schedule (not a tight loop, not a fixed delay); the same backoff governs healthcheck-driven
+  restarts. Start, stop/drain (`stop_owned` grace above), and healthcheck timeouts each accept a
+  **`GraceTimeout`**: a finite default, `0` (immediate where that makes sense), or `Inf` (wait
+  forever). This reverses the old "no infinite wait" rule.
 
 ### 3.1 Platform exit-watch notes
 
@@ -274,6 +309,12 @@ deletes it. Sources verified in [investigation 03 §4](#7-migration-out-of-iii-i
 | 8 | Independently-started processes invisible except via `ps`/`/proc` heuristics | `managed.rs:2443-2631` | **Token correlation (§9).** Workers self-identify over WS via `instance_token`; they appear in the table without cmdline scanning. `ps`-scan demoted to an opt-in `process::reconcile --scan` fallback. |
 | 9 | Sandbox launcher `drop(child)` detaches `__vm-boot`; idle-reaper-only; no startup orphan sweep | `adapters.rs:229-236`; `reaper.rs:8-33` | Daemon **keeps the `Child`** and adds **startup reconciliation** (§8): on boot it reads `state.json` and reaps/re-adopts leftover `__vm-boot` PIDs before serving. |
 
+**Scope of these fixes (D2):** every row above covers **daemon-spawned** workers; this is where
+the daemon's zombie-free-by-construction guarantee holds. Workers started by docker, systemd/
+launchd, bash, tmux, by hand, or on a remote host are reaped by *their own* supervisors and are
+not iii's responsibility; the daemon never claims to reap a PID it did not parent (they appear as
+observe-only `Foreign` connections, §9).
+
 **Honesty note (Crit 02 #4, #5):** the recovery substrate (#3, #9 fixes) leans on `state.json`,
 `daemon.lock`, pidfd/kqueue, `PR_SET_CHILD_SUBREAPER` — all net-new. This is a from-scratch
 supervisor, not a port. On macOS, #3's recycle-immunity and the subreaper net are **not
@@ -288,8 +329,8 @@ Every CLI verb maps 1:1 to a function (the thin-CLI contract — see
 
 ```
 process::start    { spec: ProcSpec, watch?: Vec<glob>, ws_port?: u16 }  -> { id, pid, state, instance_token }
-process::stop     { id, grace_secs?: u32 (def 3) }                      -> { id, state }
-process::restart  { id, grace_secs?: u32 }                              -> { id, pid, state }
+process::stop     { id, grace?: u32|"Inf"|0 (def 3) }                   -> { id, state }   // Inf = wait forever, 0 = immediate (D6)
+process::restart  { id, grace?: u32|"Inf"|0 }                           -> { id, pid, state }
 process::status   { id }                                                -> ProcStatus
 process::ps       { filter?: { kind?, state?, owned? } }                -> { procs: Vec<ProcStatus> }
 process::logs     { id, follow?: bool, tail?: u32, since?: ts, stream?: "stdout"|"stderr"|"both" }
@@ -319,11 +360,22 @@ struct ProcSpec {
     program: String, args: Vec<String>, // or a `sh -c` line for arbitrary exec
     env: BTreeMap<String,String>, cwd: Option<PathBuf>,
     kind: ProcKind,
-    restart_policy: RestartPolicy,      // Always | OnFailure (default) | Never  (capped exp. backoff)
+    restart_policy: RestartPolicy,      // see below
     watch: Option<Vec<String>>,         // glob restart, reuses exec.rs glob logic (exec.rs:217-263 / glob_exec.rs)
     sandbox: Option<SandboxRef>,        // present → daemon calls sandbox::create then parents the __vm-boot PID
     ws_port: u16,                       // injected as IIIWORKER_PORT so the worker connects back
 }
+
+/// Restart with capped exponential backoff is first-class (D6), not an implicit detail.
+struct RestartPolicy {
+    mode: RestartMode,                  // Always | OnFailure (default) | Never
+    backoff: Backoff,                   // { initial: Duration, max: Duration, factor: f64 }; CAPPED exp.
+    max_retries: Option<u32>,           // None = unbounded retries (still backoff-capped)
+    start_timeout: GraceTimeout,        // Finite(d) | 0 | Inf; max wait for the process to reach Running
+}
+
+/// Every daemon timeout is one of these three (D6; reverses "no infinite wait").
+enum GraceTimeout { Finite(Duration), Zero, Inf }   // Inf = wait forever; Zero = immediate
 ```
 
 - The old `iii-exec` pipeline was a **single unnamed** `exec: [...]` list run at engine startup
@@ -344,6 +396,8 @@ struct ProcStatus {
     id: String,                 // compose <id>, stable key
     pid: Option<u32>, pgid: Option<u32>,
     kind: ProcKind,             // HostProc | VmWorker | SourceWatcher | ExecPipeline | Sandbox | Foreign
+                                // Foreign (observe-only) explicitly includes docker/systemd/launchd/
+                                // bash/tmux-managed AND remote workers (anything the daemon did not spawn)
     state: ProcState,           // Starting | Running | Ready | Unhealthy | Stopping | Stopped | Crashed | Exited(i32)
                                 // Unhealthy = alive + connected but a configured healthcheck is failing
                                 // (distinct from Crashed/Exited). Default on healthcheck fail = mark
@@ -361,7 +415,7 @@ struct ProcStatus {
 ```
 
 `process::ps` returns `Vec<ProcStatus>` **as data** (today `status` is a live-refresh TUI dump,
-not a queryable surface). The TUI (`tuiii`) and `iii ps` both become thin clients polling
+not a queryable surface). The TUI (`tuiii`) and `iii worker ps` both become thin clients polling
 `process::ps`. **TUI co-migration (Crit 04 M3):** `tuiii` hard-codes `worker::list/start/stop/logs`
 (`tuiii/src/engine/workers.rs:120,328,339`, `logs.rs:77`); those functions move/rename, so the
 spec's function-id compatibility plan (kept `worker::*` alias-forwarders for one deprecation cycle,
@@ -373,7 +427,7 @@ or in-lockstep TUI update) is **required** — see [migration.md](migration.md) 
 ## 6. Log capture: ring buffer + file (and the relationship to iii-observability)
 
 Today the `iii-exec` worker spawns with `Stdio::inherit()` (`exec.rs:186/204/212`), so output goes
-straight to the engine's terminal and **there is no capture at all** — no `iii logs`, no crash
+straight to the engine's terminal and **there is no capture at all** — no `iii worker logs`, no crash
 tails. `spawn_owned` switches to `Stdio::piped()` and tees both fds into:
 
 1. a per-process **ring buffer** (last-N lines, in memory), and
@@ -394,15 +448,15 @@ These are **two different things and must never be conflated**:
 | What | An **ephemeral tee** of process stdout/stderr fds | The **durable, structured OTEL** store (logs/metrics/traces) |
 | Scope | last-N lines per process, in memory (+ a capped file) | full pipeline, exported to a backend |
 | Lifetime | **lost on daemon crash** (that is acceptable) | survives crashes; cross-restart history |
-| Audience | `iii logs <id>`, crash tails, the inner dev loop | day-2 ops, dashboards, alerting |
+| Audience | `iii worker logs <id>`, crash tails, the inner dev loop | day-2 ops, dashboards, alerting |
 | Source | the raw fds the daemon owns | the worker's own OTEL export (`iii-observability`/`iii-telemetry`, `telemetry/mod.rs:999`) |
 
 State it explicitly: **the ring buffer is a tee of the same bytes, capped, never the durable
-store.** A line can appear in `iii logs` (ring) but not the OTEL backend if the worker never
+store.** A line can appear in `iii worker logs` (ring) but not the OTEL backend if the worker never
 exports it, and vice versa — they are independent paths and the dev must be told so.
 
-**Open question (recommended default below):** *Should `iii logs` optionally read durable history
-from `iii-observability`?* — Recommended default: `iii logs <id>` reads the **ring** by default
+**Open question (recommended default below):** *Should `iii worker logs` optionally read durable history
+from `iii-observability`?* — Recommended default: `iii worker logs <id>` reads the **ring** by default
 (fast, zero-config, what you want in the inner loop) and accepts `--durable` to query
 `iii-observability` for cross-restart/cross-daemon-crash history when the dev has it configured.
 This keeps the common case ring-buffer-fast while giving an escape hatch to durable logs. Final
@@ -541,13 +595,16 @@ Three tiers of process identity, by how the worker came to exist:
 
 | Tier | How it started | Identity | Control |
 |---|---|---|---|
-| **Managed** | spawned by the daemon via `spawn_owned` | `instance_token` minted + injected (`III_INSTANCE_TOKEN`), correlated to its WS connection on connect | **Full** — daemon is parent, reaps, killpg, restarts per policy |
-| **Connected-but-untokened** | dev ran it by hand (`npm run dev`); connects over WS with no token | known via the engine's `worker_connected` trigger (reports `pid`, runtime, isolation), appears in `ps` as `Foreign` | **Observe-only** by default (daemon never claims to reap a PID it didn't parent) |
-| **Attached** | explicitly `process::attach{id, pid, owned:false}` | a `Foreign` table entry; liveness via pidfd/kqueue if it's a descendant, else low-frequency `kill(pid,0)` | **Best-effort** SIGTERM only; never claimed-reaped |
+| **Managed** | spawned by the daemon via `spawn_owned` | `instance_token` minted + injected (`III_INSTANCE_TOKEN`), correlated to its WS connection on connect | **Full**: daemon is parent, reaps, killpg, restarts per policy |
+| **Connected-but-untokened** | started by **anything other than this daemon**: dev ran it by hand (`npm run dev`), or it is supervised by **docker / systemd / launchd / bash / tmux**, or it is a **remote** worker on another host; connects over WS with no daemon-minted token | known via the engine's `worker_connected` / `worker_available` trigger (reports `pid` where local, runtime, isolation, host), appears in `ps` as `Foreign` | **Observe-only** (the daemon never claims to reap a PID it didn't parent; its own runner supervises it) |
+| **Attached** | explicitly `process::attach{id, pid, owned:false}` | a `Foreign` table entry; liveness via pidfd/kqueue if it's a local descendant, else low-frequency `kill(pid,0)` | **Best-effort** SIGTERM only; never claimed-reaped |
 
-`instance_token` is the **canonical** correlation/authz key (verifiable, replaces ps-scan
-identity, doubles as a security boundary — strictly better than pid-matching, which is
-recycle-prone). The engine already fires `worker_connected`/`worker_disconnected`
+`instance_token` is the **canonical** correlation/authz key and the **managed-vs-observe
+boundary**: a daemon-minted token means the daemon is the parent and may stop/restart/reap it;
+its *absence* means the worker belongs to some other runner (docker/systemd/launchd/bash/tmux/
+remote) and iii only observes and reports it. The token is verifiable, replaces ps-scan identity,
+and doubles as a security boundary (strictly better than pid-matching, which is recycle-prone).
+The engine already fires `worker_connected`/`worker_disconnected`
 (`engine/mod.rs:1494-1499`) and workers already self-report metadata on connect
 (`worker_connections/mod.rs:126-155`), so the WS connection is the registrar that
 [investigation 03 §5](#7-migration-out-of-iii-inventory) asked for — no cmdline scanning needed.
@@ -613,36 +670,51 @@ sequenceDiagram
 
 ---
 
-## 11. Multi-engine / per-project keying (resolved decision)
+## 11. Multi-runner / per-port keying (resolved decision)
 
 A single machine-global daemon cannot serve N per-project composes safely: two projects can both
 declare a worker `math`, and a `down` in project A keyed only by `compose_id` could reap project
 B's `math` (Crit 02 #5/#16). **Resolved decision:**
 
-> The daemon is **per engine / per port.** Its lock and state live under a **per-port directory**:
+> The daemon is **per runner / per port.** Its lock and state live under a **per-port directory**:
 > `~/.iii/daemon/<port>/daemon.lock` and `~/.iii/daemon/<port>/state.json`. The `<port>` is the
-> compose's WS gateway `port` (the one marquee bootstrap scalar). One `iii up` boots engine-on-:P
-> plus the daemon-for-:P; a second project on a different port gets its own daemon, its own lock,
-> its own state. A `down` in one project can never reap another's PIDs because they are different
-> daemons keyed by different ports.
+> compose's WS gateway `port` (the one marquee bootstrap scalar). One `iii worker compose up`
+> boots (or attaches to) the daemon-for-:P on that runner; a second project on a different port
+> gets its own daemon, its own lock, its own state. A `down` by one runner can never reap
+> another's PIDs because they are different daemons keyed by different ports.
 
-Two projects on the **same** port is a genuine port collision (the engine refuses to bind), which
-is the correct, loud failure — not a silent cross-project reap.
+Two runners on the **same** machine and **same** port is a genuine port collision (the engine
+refuses to bind), which is the correct, loud failure, not a silent cross-runner reap.
 
-**Relative-path resolution (Crit 02 #16):** any relative path (the `configuration` store
-`directory`, etc.) is resolved against the **compose file's directory**, never the CWD of whoever
-ran `up`. Running `iii up` from a subdir must not create a second store. This rule is shared with
+**Multi-host hub (D2, in scope for v1).** Multiple machines may each run `iii worker compose up`
+against **one shared engine**. Each machine's runner runs its own per-port daemon and parents
+**only the local PIDs it spawned**; there is no cross-host parent. So **lifecycle management is
+local-per-runner in v1** (a daemon stops/restarts/reaps only its own local children). Cross-host
+**status and inspection** still work: every worker, wherever it runs, reports availability through
+the engine's `worker_available` trigger and connection registry, so `process::ps` / `iii worker
+status` can surface remote workers as `Foreign` (observe-only). Cross-host `stop`/`restart` is
+**not a v1 promise**; it is the runner-on-that-host's job.
+
+**Relative-path resolution (Crit 02 #16):** any relative path in a compose file
+(`runtime.workspace`, `env_file[*]`, a `config.path` to a local file, etc.) is resolved against
+the **compose file's directory**, never the CWD of whoever ran `up`. (There is no separate
+`./data/configuration` store to anchor; per-worker config lives in the compose file itself, with
+the worker's `defaults.yaml` as the floor.) Running `iii worker compose up` from a subdir must
+resolve identically. This rule is shared with
 [configuration-and-bootstrap.md](configuration-and-bootstrap.md) and
 [worker-compose.md](worker-compose.md); stated here because the daemon's own `state.json` path
-participates in it.
+(keyed per-port, not per-compose-dir) participates in the broader isolation contract.
 
 **Alternative considered (rejected):** one machine-global daemon that namespaces every entry by
-`(project_root_or_port, compose_id)` and serves N engines. Rejected because it concentrates blast
+`(project_root_or_port, compose_id)` and serves N runners. Rejected because it concentrates blast
 radius (one daemon crash takes down every project) and complicates the lock/state model for no DX
-gain at single-developer scale. Per-port is simpler and isolates failure. If a future need arises
-for a shared daemon (e.g. a resource-constrained CI host running many composes), the per-port dirs
-are forward-compatible with a later shared-daemon mode that simply manages multiple `<port>`
-sub-tables.
+gain at single-developer scale. Per-port is simpler and isolates failure. A **single engine-side
+daemon that parents every host's PIDs** is also rejected, and more strongly: the engine manages
+nothing and cannot parent a PID on another machine, so cross-host lifecycle is necessarily
+local-per-runner (the engine only reports availability; it does not supervise). If a future need
+arises for a shared daemon (e.g. a resource-constrained CI host running many composes), the
+per-port dirs are forward-compatible with a later shared-daemon mode that simply manages multiple
+`<port>` sub-tables.
 
 ---
 
@@ -666,10 +738,15 @@ The entire daemon is Unix-shaped: `setpgid`/`killpg`/`setsid`/pidfd/kqueue/`PR_S
 
 ## 13. Open questions for the lead author (README.md)
 
-1. **`iii logs --durable` (§6.1):** confirm the default — ring-by-default, `--durable` reads
+> **Framing (D2).** All of the below are scoped to the daemon as **one runner option**, not the
+> universal PID owner: the **engine manages nothing**, and the daemon supervises only the workers
+> it itself spawns (docker/systemd/launchd/bash/tmux/remote workers are their own runners' job).
+> Read every "the daemon …" below with that scope.
+
+1. **`iii worker logs --durable` (§6.1):** confirm the default — ring-by-default, `--durable` reads
    `iii-observability`. The `OTEL_*`/`observability:` config-flow wiring is owned by
    [lifecycle-and-onboarding.md](lifecycle-and-onboarding.md); the README master table should show
-   `iii logs` as a `process::logs` consumer with the optional durable hop.
+   `iii worker logs` as a `process::logs` consumer with the optional durable hop.
 2. **Re-adopt vs fresh on daemon crash (§8.2):** recommended default is **re-adopt** (keep workers
    alive, accept the `owned:false` window); `process::reconcile --fresh` is the kill+respawn opt-out.
    Confirm this is the cross-doc default.
@@ -678,7 +755,9 @@ The entire daemon is Unix-shaped: `setpgid`/`killpg`/`setsid`/pidfd/kqueue/`PR_S
    invokes → bounded wait for in-flight → then SIGTERM; or blue/green) is cross-cutting between the
    daemon's `stop_owned` and the engine's routing — recommend it be specified in
    [engine-and-gateway.md](engine-and-gateway.md) / [lifecycle-and-onboarding.md](lifecycle-and-onboarding.md)
-   with `stop_owned` taking a `drain_first` flag the daemon honors. Flag for the README to assign.
+   with `stop_owned` taking a `drain_first` flag the daemon honors. The drain timeout is a
+   `GraceTimeout` (D6): a finite default, `0` (force-halt immediately), or **`Inf`** (wait forever
+   for in-flight calls to finish). Flag for the README to assign.
 4. **libkrun preflight (Crit 02 #11):** sandbox-backed workers on a host without hardware virt
    should fail at `compose::up` preflight with a clear error, not mid-topo-sort. The capability
    probe belongs to `compose::up`/`iii-sandbox`, but the daemon's `process::start` should return a

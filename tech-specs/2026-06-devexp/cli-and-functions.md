@@ -60,14 +60,25 @@ name. This map is the CANON; no other file in this set may re-namespace these.
 
 | Owner | Worker id | Responsibility class | Owns functions |
 |---|---|---|---|
-| **worker-ops** | `iii-worker-ops` (MAY be in-engine) | **Desired state / catalog**: resolve sources, install/remove/version-pin artifacts, list/describe the declared set, drive the compose graph (topo-sort + readiness). Touches `worker-compose.yml`, `iii.lock`, `~/.iii/{workers,images,managed}`. **Never holds a PID.** | `worker::{add,update,remove,clear,list,info,schema}`, `compose::{up,down,restart,status,validate}` |
-| **process-daemon** | `iii-process-daemon` (separate long-lived process) | **Runtime / PIDs**: the single direct parent of every host process (no `setsid`). start/stop/restart, stream logs, the authoritative process table, run-now exec, signal + group-reap. Absorbs the deleted `iii-exec` and the host-spawn logic pulled out of the engine. **Never decides WHAT to run or resolves a version.** | `process::{start,stop,restart,status,ps,logs,exec,signal,attach,reconcile}` |
+| **worker-ops** | `iii-worker-ops` (MAY be in-engine) | **Desired state / catalog**: resolve sources, install/remove/version-pin artifacts, list/describe the declared set, drive the compose graph (topo-sort + readiness). Touches `worker-compose.yaml`, `iii.lock`, `~/.iii/{workers,images,managed}`. **Never holds a PID.** | `worker::{add,update,remove,clear,list,info,schema}`, `compose::{up,down,restart,status,validate}` |
+| **process-daemon** | `iii-process-daemon` (separate long-lived process; ONE runner option among docker/systemd/bash) | **Runtime / PIDs**: the direct parent of the host processes **it itself spawns** (no `setsid`). start/stop/restart, stream logs, the authoritative table of *those* processes, run-now exec, signal + group-reap. Absorbs the deleted `iii-exec` and the host-spawn logic pulled out of the engine. **Never decides WHAT to run or resolves a version; never claims a worker it did not spawn.** | `process::{start,stop,restart,status,ps,logs,exec,signal,attach,reconcile}` |
 | **sandbox** | `iii-sandbox` (kept separate) | **Isolated runtime**: microVM lifecycle + in-VM exec/fs. Already function-first. The process-daemon delegates sandboxed spawns here but still parents the resulting `__vm-boot` PID. | `sandbox::*` + `sandbox::fs::*` (UNCHANGED) |
-| **configuration** | `configuration` (mandatory, auto-injected) | **Config store**: per-worker runtime config as iii primitives; schema validation; `${VAR}` expansion; hot-reload fan-out. | `configuration::{register,set,get,list,schema}` (UNCHANGED) |
+| **configuration** | `configuration` (OPTIONAL; iii runs with zero workers, including this one) | **Read/update layer over the active `worker-compose.yaml`**: resolves effective per-worker config (`defaults.yaml` ◁ compose), schema validation; `${VAR}` expansion; hot-reload fan-out; writes runtime changes back into the active compose file (never `defaults.yaml`). | `configuration::{register,set,get,list,schema}` (UNCHANGED) |
 
 > The `worker-gateway` (WS listener / port opener) is an **internal engine concept, not a worker and
 > not a function owner**. It binds the port from `compose.port` and routes invocations. See
 > [engine-and-gateway.md](engine-and-gateway.md).
+
+**The engine manages nothing; the runner manages what it started.** A "running worker" is *any*
+process connected to the engine, started by anything (the `iii-process-daemon`, docker, systemd/launchd,
+a bash script, a tmux session, or by hand). The engine never spawns, never parents a PID, and never
+supervises a lifecycle; it only routes invocations and **reports availability** via the
+`worker_available` trigger (see [engine-and-gateway.md](engine-and-gateway.md)). `iii-process-daemon` is
+the **local runner's supervisor**, one option among docker/systemd/bash, not the universal parent of
+every PID; it owns only the host workers it itself spawned. Cross-host: management is **local-per-runner
+in v1** (each runner manages only the workers it started), while cross-host *status / inspection* works
+through the engine's reporting (the `worker_available` trigger), so `list` / `status` see remote workers
+even though cross-host `stop` / `restart` is not a v1 promise.
 
 ### 2.1 The worker-ops ↔ process-daemon line — the single most important decision
 
@@ -128,52 +139,100 @@ of the same binary, reached via hidden subcommands (`iii __process-daemon`, `iii
 `engine/src/main.rs`): `--address <host>` (default `127.0.0.1`), `--port <u16>` (default from
 `compose.port`, else `49134`), `--timeout-ms <u64>` (default per-op from `op_metadata`), `--json`
 (machine output), `-q/--quiet`, `--no-color`, `-y/--yes` (preset consent on the destructive verbs).
+(`iii trigger` additionally takes `--timeout <secs|Inf>` (default 60s; `Inf` = wait forever), the
+max wait for an *initial* async response, distinct from the per-op `--timeout-ms` wrapper bound; D6.)
 
 ```
-iii
-├── up      [W...]  [-d|--detach] [--no-deps] [--force-recreate] [--build] [--wait] [--frozen] [--ephemeral]
-├── down    [W...]  [--clear-artifacts] [--remove-orphans] [-t|--timeout <s>] [--ephemeral]
-├── ps      [--json]
-├── logs    [W...]  [-f|--follow] [-n|--tail <N>] [--since <dur>]
-│            #  ^^^ top-level aliases = `iii worker compose {up,down,ps,logs}`; same backing fns
+iii                                          # bare `iii` = start the ENGINE ONLY
+│   [--compose] [-f|--file <worker-compose.yaml>]
+│            #  `iii --compose` = start the engine AND run `compose up` (the tutorial one-liner);
+│            #  `-f` selects the compose file (default worker-compose.yaml / target overlay)
 │
-├── trigger <fn-path> [k=v ...]            # unchanged; the generic escape hatch
+├── trigger <fn-path> [k=v ...] [--timeout <secs|Inf>]   # the generic escape hatch (§3.2)
 │
 ├── migrate [--from <config.yaml>] [--dry-run] [--reap-legacy]   # one-shot config.yaml → compose
 │
 ├── worker                                  # catalog + per-worker runtime convenience
+│   │   # `--help` output is grouped by relation AND alphabetized within each group;
+│   │   # `--address <host>` / `--port <u16>` are accepted on ALL subcommands and applied
+│   │   # wherever the subcommand needs to reach the engine.
 │   ├── add <SRC>...   [-f|--force] [--up] [--no-wait]
-│   │        # SRC = name[@ver] | oci-ref | ./path ; edits compose+lock, does NOT auto-start
+│   │        # SRC = name[@ver] | oci-ref | ./path ; edits compose+lock, does NOT auto-start.
+│   │        # ALWAYS re-runs setup + install scripts (today add skips when the lock looks current,
+│   │        # which confuses users who changed deps).
+│   ├── reinstall <W>... [--no-wait]             # alias of `add --force`; ALWAYS re-runs setup + install
 │   ├── update [W]...  [-f|--force] [--clear-artifacts] [--restart] [--no-wait]
+│   │        # ALWAYS re-runs setup + install scripts on the updated workers.
 │   ├── remove <W>...  [--clear-artifacts] [-y|--yes]
 │   ├── clear  [W]...  [--unused] [-y|--yes]      # wipe artifacts only; --unused = GC
-│   ├── list   [--running] [--json]
+│   ├── list   [--running] [--json]               # alias of `iii trigger worker::list` (§3.2)
 │   ├── info   <W>     [--json] [--reveal]        # NEW: one worker, full resolved detail
 │   ├── start  <W>...  [--no-wait]                # runtime → process-daemon
 │   ├── stop   <W>...  [-y|--yes] [-t|--timeout <s>]
 │   ├── restart <W>... [--no-wait]
-│   ├── logs   <W>     [-f|--follow] [-n|--tail <N>] [--since <dur>]
-│   ├── status <W>     [--watch] [--json]         # default ONE-SHOT; --watch = live TUI
-│   ├── ps     [--json]                           # NEW: process table across managed procs
+│   ├── logs   <W>...  [-f|--follow] [-n <LIMIT>] [--since <when>] [--until <when>]
+│   │        # alias of `iii trigger worker::logs` (§3.2); cross-worker lines prefixed `workername: `
+│   ├── status <W>...  [--watch] [--json]         # default ONE-SHOT; --watch = live TUI.
+│   │        # alias of `iii trigger worker::status`; tails stdout so the latest log line always shows
+│   │        # (so a long Rust build does not look stalled).
 │   ├── exec   <W> [-e K=V] [-w CWD] [-t|--tty] [--timeout <ms>] -- CMD...
 │   ├── config <W> [get <key> | set <key> <val> | edit | list] [--reveal] [--json]   # NEW → configuration::*
 │   ├── init   [name] ...                         # scaffold a NEW worker (engine-local, unchanged)
+│   │        # NOTE: `iii worker sandbox` is REMOVED in favor of `iii trigger` (§3.2, D9).
 │   │
-│   └── compose                                   # the worker-compose.yml lifecycle
+│   └── compose                                   # the worker-compose.yaml lifecycle
+│       │   # `--address` / `--port` accepted on all subcommands, as above.
 │       ├── up      [W...] [-d|--detach] [--no-deps] [--force-recreate] [--build] [--wait] [--frozen] [--ephemeral]
 │       ├── down    [W...] [--clear-artifacts] [--remove-orphans] [-t|--timeout <s>] [--ephemeral]
 │       ├── restart [W...] [--no-deps] [-t|--timeout <s>]
-│       ├── logs    [W...] [-f|--follow] [-n|--tail <N>] [--since <dur>]
+│       ├── logs    [W...] [-f|--follow] [-n <LIMIT>] [--since <when>] [--until <when>]
 │       ├── status  [W...] [--watch] [--json]
-│       ├── ps      [--json]                       # alias of `worker ps` scoped to the compose set
-│       ├── exec    <W> [-e K=V] [-w CWD] [-t] [--timeout <ms>] -- CMD...
-│       ├── sandbox <run|exec|list|stop|fs ...>    # passthrough to sandbox::*
-│       └── validate [--frozen]                    # parse + cycle-check + lock-drift; replaces `verify`
+│       ├── validate [--frozen]                    # parse + cycle-check + lock-drift; replaces `verify`
+│       └── generate-docker [--out <dir>]          # emit a Dockerfile/compose for the declared set
+│            #  (distinct from `iii project generate-docker`, which scaffolds a single worker's image)
+│
+│            # Array args (multiple ids in one call) are accepted on: add, update, remove, reinstall,
+│            # clear, stop, start, restart, status, exec, logs.
 │
 └── project init / generate-docker               # scaffolding (engine-local, no fn), unchanged
 ```
 
-### 3.1 Per-flag justification
+### 3.1 Entry points and `iii trigger`
+
+The CLI has exactly two ways to start a system, and one generic invocation escape hatch:
+
+- **`iii`** (bare) starts the **engine only**: it binds the WS port and runs the connection plane; no
+  workers are brought up.
+- **`iii --compose [-f <file>]`** starts the engine **and** runs `compose up` against the selected
+  compose file (default `worker-compose.yaml`, or a target overlay). This is the tutorial one-liner,
+  the single "start everything" command; it is exactly `iii` followed by `iii worker compose up`.
+- **`iii worker compose up|down|restart|logs|status|validate|generate-docker`** is the canonical
+  lifecycle surface. There is **no** top-level `iii up` / `iii down` / `iii ps` / `iii logs`.
+
+`iii trigger <fn> [k=v ...]` is the generic, typed-free WS invocation. It gains a **`--timeout
+<secs|Inf>`** flag (default **60s**): the maximum wait for an *initial* response on an async call
+before aborting; `Inf` waits forever (D6). The `worker::*` reporting functions it reaches gain new
+flags:
+
+- **`iii trigger worker::list`**: `--status=running|stopped|failed` (filter), `--include=pid,uptime,…`
+  and `--exclude=version` (column control). The default table grows **PID** and **uptime** columns
+  (extensible later: ip, base_image, …).
+- **`iii trigger worker::logs`**: `-n <LIMIT>` (per-worker line cap, default **100**); `--since` /
+  `--until` accept ISO8601 datetimes **and** relative human times (`1h`, `30m`; an ISO8601 period like
+  `P1H` is also valid, not required). Logs across workers prefix each line with `workername: `.
+- **`iii trigger::console`**: the console becomes a regular worker invoked via trigger; it is the
+  **replacement for the removed `iii console`** command.
+
+**`list` / `status` / `logs` / `console` reduce to `iii trigger worker::*` (and `trigger::console`)
+forms.** The `iii worker list|status|logs` and the old `iii console` are documented as **aliases** over
+those trigger forms (same backing functions); the trigger form is the canonical one.
+
+The bespoke **`iii worker sandbox`** / `iii worker compose sandbox` commands are **removed** in favor of
+`iii trigger`. The prerequisite (D9): once `iii trigger` supports async/streaming responses plus
+uploads/downloads, a sandbox is just a regular worker whose functions are invoked via `trigger`. The
+`sandbox::*` / `sandbox::fs::*` functions are kept; only the special CLI command retires.
+
+### 3.2 Per-flag justification
 
 | Command · flag | Backed by / origin | Why it exists |
 |---|---|---|
@@ -191,9 +250,9 @@ iii
 | `info --reveal` / `config --reveal` | NEW (secrets) | un-redact secret values; default is `***` (see [secrets.md](secrets.md)) |
 | `start/stop/restart` (multi `W`) | `process::*` | compose convenience; one call, many ids |
 | `stop -t/--timeout` | NEW | grace window before SIGKILL (process-daemon group-reap) |
-| `logs --follow/--tail/--since` | process-daemon ring buffer | stream vs bounded history |
-| `status` default one-shot; `--watch` | re-point of `cli::status` TUI | fixes "status is always a TUI" friction; old TUI = `--watch` |
-| `ps` | NEW fn | process-table view across all managed procs |
+| `logs --follow / -n / --since / --until` | process-daemon ring buffer | stream vs bounded history; `-n` caps per-worker lines (default 100), `--since/--until` take ISO8601 or relative human times |
+| `status` default one-shot; `--watch` | re-point of `cli::status` TUI | fixes "status is always a TUI" friction; old TUI = `--watch`; tails stdout so a long Rust build never looks stalled |
+| `trigger --timeout <secs\|Inf>` | NEW (D6) | max wait for an initial async response (default 60s; `Inf` = forever) |
 | `exec -- CMD`, `-t/--tty` | today's `ExecArgs` (`crates/iii-worker/src/cli/app.rs:239`) | run-now in a worker; PTY mode |
 | `config get/set/edit/list` | NEW → `configuration::*` | per-worker config CRUD; the single config surface (§10) |
 | `compose up -d/--detach` | NEW | detach (return after ready) vs foreground (stream + SIGINT→down) |
@@ -222,15 +281,16 @@ unchanged surface), `EXISTS*` (registered but the surface/owner changes — a co
 | `worker update` | `worker::update` | worker-ops | sync | `UpdateOptions{ names:[String], force:bool, clear_artifacts:bool, restart:bool, wait:bool }` | `UpdateOutcome{ updated:[UpdateEntry{name,from,to}], restarted:[String] }` | EXISTS* — add `force/clear_artifacts/restart` (`crates/iii-worker/src/core/types.rs:122`) |
 | `worker remove` | `worker::remove` | worker-ops | sync | `RemoveOptions{ names:[String], all:bool, clear_artifacts:bool, yes:bool }` | `RemoveOutcome{ removed:[String], cleared_bytes? }` | EXISTS* — add `clear_artifacts` (`crates/iii-worker/src/core/types.rs:104`) |
 | `worker clear` | `worker::clear` | worker-ops | sync | `ClearOptions{ names:[String], all:bool, unused:bool, yes:bool }` | `ClearOutcome{ cleared_bytes }` | EXISTS* — add `unused` (`crates/iii-worker/src/core/types.rs`) |
-| `worker list` | `worker::list` | worker-ops | sync | `ListOptions{ running_only:bool }` | `ListOutcome{ workers:[WorkerEntry{name,version,running,pid}] }` | EXISTS (`crates/iii-worker/src/core/list.rs`) |
+| `worker list` (= `trigger worker::list`) | `worker::list` | worker-ops | sync | `ListOptions{ running_only:bool, status?:running\|stopped\|failed, include:[String], exclude:[String] }` | `ListOutcome{ workers:[WorkerEntry{name,version,running,pid,uptime}] }` | EXISTS*; add `status/include/exclude` filters + PID/uptime columns (`crates/iii-worker/src/core/list.rs`) |
 | `worker info` | `worker::info` | worker-ops | sync | `InfoOptions{ name:String, reveal:bool }` | `InfoOutcome{ name, version, source, locked, declared, runtime?, running, pid?, depends_on:[String] }` | **NEW** |
 | `worker schema` | `worker::schema` | worker-ops | sync | `{ trigger? }` | `{ schemas: map<fn,{input,output}> }` | EXISTS (`crates/iii-worker/src/cli/worker_manager_daemon.rs:177`) |
 | `worker config get/set/edit/list` | `configuration::{get,set,list}` | **configuration** | sync | per `configuration::*` (`{ entry_id, key?, value?, reveal? }`) | per `configuration::*` | EXISTS (configuration worker) |
 | `worker start` | `process::start` | **process-daemon** | sync | `StartOptions{ names:[String], port?:u16, wait:bool }` | `StartOutcome{ started:[{name, pid, port?}] }` | EXISTS* as `worker::start` (`worker_manager_daemon.rs:328`) — **MOVE; stop detaching** |
 | `worker stop` | `process::stop` | **process-daemon** | sync | `StopOptions{ names:[String], grace_ms?:u64, yes:bool }` | `StopOutcome{ stopped:[{name,signal}] }` | EXISTS* as `worker::stop` (`worker_manager_daemon.rs:339`) — **MOVE; group-reap** |
 | `worker restart` | `process::restart` | **process-daemon** | sync | `RestartOptions{ names:[String], wait:bool }` | `RestartOutcome{ restarted:[{name,pid}] }` | EXISTS* — today not a fn (`cli::managed::handle_managed_restart`); make a fn |
-| `worker logs` | `process::logs` | **process-daemon** | stream | `LogsOptions{ names:[String], follow:bool, tail?:u32, since?:Duration }` | stream of `LogLine{ ts, worker, stream:stdout\|stderr, line }` then `LogEnd` | EXISTS* as `worker::logs` (terminal-tangled; `../tuiii/src/engine/logs.rs:77`) — needs ring-buffer capture |
-| `worker status` | `process::status` | **process-daemon** | sync | `StatusOptions{ name:String }` | `StatusOutcome{ name, state:ProcState, pid?, uptime?, restarts, ready, last_exit? }` | EXISTS* — TUI-only today; add data fn, keep TUI as `--watch` client |
+| `worker logs` (= `trigger worker::logs`) | `process::logs` | **process-daemon** | stream | `LogsOptions{ names:[String], follow:bool, limit?:u32 (=-n, default 100), since?:When, until?:When }` | stream of `LogLine{ ts, worker, stream:stdout\|stderr, line }` then `LogEnd`; cross-worker lines prefixed `workername: ` | EXISTS* as `worker::logs` (terminal-tangled; `../tuiii/src/engine/logs.rs:77`); needs ring-buffer capture; `When` = ISO8601 or relative human (`1h`/`30m`) |
+| `worker status` (= `trigger worker::status`) | `process::status` | **process-daemon** | sync | `StatusOptions{ names:[String] }` | `StatusOutcome{ name, state:ProcState, pid?, uptime?, restarts, ready, last_exit?, last_log_line }` | EXISTS*; TUI-only today; add data fn, keep TUI as `--watch` client; tails stdout so a long build never looks stalled |
+| `console` (= `trigger::console`) | `trigger::console` | **console** (now a worker) | stream | per console session | per console session | **NEW**; REPLACES the removed `iii console` command (D9; console becomes a worker) |
 | `worker ps` | `process::ps` | **process-daemon** | sync | `PsOptions{ scope? }` | `PsOutcome{ procs:[ProcRow{ id, name, kind:worker\|exec\|sandbox, pid, state, uptime, cpu?, mem? }] }` | **NEW** |
 | `worker exec` | `process::exec` | **process-daemon** | stream | `ExecOptions{ target:{worker\|host\|sandbox}, cmd:[String], env, cwd?, tty:bool, timeout_ms? }` | stream `Started{pid}`/`Stdout`/`Stderr`/`Exited{code}` | EXISTS* — exists vs sandbox only; generalize to host+worker |
 | `worker compose up` | `compose::up` | worker-ops (calls process-daemon) | **stream** (sync if `-d`) | `ComposeUpOptions{ workers:[String], detach:bool, no_deps:bool, force_recreate:bool, build:bool, wait:bool, frozen:bool }` | stream `ComposeEvent{ worker, phase:resolve\|install\|start\|ready, … }` then `ComposeUpOutcome{ started:[String] }` | **NEW** |
@@ -240,10 +300,11 @@ unchanged surface), `EXISTS*` (registered but the surface/owner changes — a co
 | `worker compose status` | `compose::status` | worker-ops (aggregates process-daemon) | sync | `ComposeStatusOptions{ workers:[String] }` | `ComposeStatusOutcome{ rows:[{ worker, declared, state, ready, pid?, depends_on }] }` | **NEW** (joins compose graph + `process::ps`) |
 | `worker compose ps` | `process::ps` | process-daemon | sync | `PsOptions{ scope:Compose }` | `PsOutcome{...}` | alias of `process::ps` |
 | `worker compose exec` | `process::exec` | process-daemon | stream | `ExecOptions{ target:{worker:id}, ... }` | exec stream | reuses `process::exec` |
-| `worker compose sandbox …` | `sandbox::{run,exec,list,stop}` + `sandbox::fs::*` | **sandbox** | sync/stream | per sandbox op | per sandbox op | EXISTS — pure passthrough |
 | `worker compose validate` | `compose::validate` | worker-ops | sync | `ComposeValidateOptions{ frozen:bool }` | `ComposeValidateOutcome{ ok:bool, errors:[…], lock_drift? }` | **NEW** (replaces `verify`) |
+| `worker compose generate-docker` | `compose::generate_docker` | worker-ops | sync | `GenerateDockerOptions{ out?:Path }` | `GenerateDockerOutcome{ wrote:[Path] }` | **NEW** (distinct from `iii project generate-docker`) |
 | `migrate` | `migrate::config_yaml` | **migrate** (one-shot) | sync | `MigrateOptions{ from?:Path, dry_run:bool, reap_legacy:bool }` | `MigrateOutcome{ wrote:[Path], warnings:[String] }` | **NEW** |
-| `up` / `down` / `ps` / `logs` (top-level) | = `compose::{up,down}` / `process::ps` / `process::logs` | as above | as above | as above | as above | aliases (§3) |
+| `iii --compose` | = `compose::up` (after engine boot) | worker-ops | stream | `ComposeUpOptions{ … }` | as `compose::up` | the tutorial one-liner: boot engine + `compose up` (§3.1, §6) |
+| `trigger <fn>` | (any function) | (target worker) | sync/stream | `{ k=v … }` + `--timeout <secs\|Inf>` | the function's outcome | EXISTS*; add `--timeout` (default 60s; `Inf` = forever, per D6) |
 
 **Function-id namespaces, final (CANON):**
 
@@ -256,10 +317,10 @@ unchanged surface), `EXISTS*` (registered but the surface/owner changes — a co
 - `configuration::*` — owner `configuration` (UNCHANGED).
 - `migrate::config_yaml` — owner `migrate` (one-shot tool, not part of the steady-state surface).
 
-> **Bootstrap-only commands** (work before/without a live engine — §6): `up`/`compose up` (boots the
-> engine then runs `compose::up`) and `down`/`compose down` (may stop the engine after
-> `compose::down`). Every other command hard-requires a live engine and fails fast with
-> `engine not running; run \`iii up\``.
+> **Bootstrap-only commands** (work before/without a live engine — §6): `iii --compose` and `iii worker
+> compose up` (boot the engine, then run `compose::up`) and `iii worker compose down` (may stop the
+> engine after `compose::down`). Bare `iii` boots the engine alone. Every other command hard-requires a
+> live engine and fails fast with `engine not running; run \`iii --compose\` or \`iii worker compose up\``.
 
 ---
 
@@ -347,31 +408,31 @@ Under `--json`, errors also emit `{ "error": { "code": "W104", "kind": "ConsentR
 
 ## 6. Bootstrap vs connected split
 
-Only `compose up`/`compose down` (and their top-level aliases `iii up`/`iii down`) work
-**before an engine exists**. Everything else fails fast. `compose up` is the bootstrap entry point;
-its precise split:
+Only `iii --compose` / `iii worker compose up` (and `iii worker compose down`) work **before an engine
+exists**; bare `iii` boots the engine alone. Everything else fails fast. The compose-up path is the
+bootstrap entry point; its precise split:
 
 ```mermaid
 sequenceDiagram
-  participant CLI as iii up
+  participant CLI as iii --compose / iii worker compose up
   participant Engine
   participant WO as iii-worker-ops
   participant PD as iii-process-daemon
 
-  CLI->>CLI: parse worker-compose.yml LOCALLY (port, workers, depends_on — topo/dep prep only)
+  CLI->>CLI: parse worker-compose.yaml LOCALLY (port, workers, depends_on — topo/dep prep only)
   CLI->>Engine: TCP probe ws://127.0.0.1:port  — already up?
   alt engine already listening
     CLI->>WO: compose::up (over WS)  [connected path]
   else cold boot
     CLI->>Engine: spawn `iii` serve seeded with resolved compose (port → WS, workers → boot list)
-    Engine->>WO: start worker-ops (+ process-daemon, configuration as mandatory)
-    CLI->>Engine: poll WS ready (bounded by --timeout-ms)
+    Engine->>WO: start worker-ops (process-daemon as the local runner; configuration OPTIONAL)
+    CLI->>Engine: poll WS ready (bounded by --timeout)
     CLI->>WO: compose::up (over WS)
   end
   WO->>WO: topo-sort + resolve
   loop each node in order
     WO->>PD: process::start
-    WO->>WO: gate on watch_until_ready
+    WO->>WO: gate on worker_available trigger
   end
   WO-->>CLI: stream ComposeEvent (foreground) / return ComposeUpOutcome (-d)
 ```
@@ -380,26 +441,27 @@ sequenceDiagram
 irreducibly local part — parse the compose file, decide whether to spawn the engine, spawn it. The
 instant a WS exists, the up-logic is `compose::up` running inside worker-ops. So "compose up the very
 first time" and "compose up when already running" execute the **same function body**. No logic forks
-into the CLI.
+into the CLI. `iii --compose` is exactly this path: boot the engine, then `compose::up`.
 
 The engine's own boot performs an *implicit* `compose::up` of the declared set as its normal startup
-(replacing today's per-worker auto-spawn), so a bare `iii` (serve) and `iii up -d` converge to the
-same running state. What the engine seeds at boot — top-level `port` → the WS listener directly
-(killing the old `iii-worker-manager.config.port` indirection), `workers:` → worker-ops' declared
-set — is the [engine-and-gateway.md](engine-and-gateway.md) and
+(replacing today's per-worker auto-spawn), so a bare `iii` (engine only) followed by
+`iii worker compose up -d` and a single `iii --compose` converge to the same running state. What the
+engine seeds at boot — top-level `port` → the WS listener directly (killing the old
+`iii-worker-manager.config.port` indirection), `workers:` → worker-ops' declared set — is the
+[engine-and-gateway.md](engine-and-gateway.md) and
 [configuration-and-bootstrap.md](configuration-and-bootstrap.md) deliverable; this doc consumes it.
 
-### 6.1 `iii up` is a log-streaming client; the daemon is always detached
+### 6.1 The foreground up is a log-streaming client; the daemon is always detached
 
 This is a behavioral contract, not an implementation detail:
 
-- The **process-daemon is always detached and long-lived**. `iii up` NEVER becomes the parent of any
-  worker PID.
-- **`iii up` (foreground)** = "ensure engine + daemon, run `compose::up`, then **attach as a
+- The **process-daemon is always detached and long-lived**. The foreground `iii --compose` /
+  `iii worker compose up` CLI NEVER becomes the parent of any worker PID.
+- **Foreground (no `-d`)** = "ensure engine + daemon, run `compose::up`, then **attach as a
   log-streaming client** and **install a SIGINT handler that invokes `compose::down`**." Teardown is
   an explicit CLI action (a `compose::down` call), not a side effect of the CLI exiting.
-- **`iii up -d`** = same, minus the attach and minus the SIGINT→down handler.
-- **Therefore: `kill -9` of the `iii up` CLI leaves workers RUNNING** (the daemon owns them). Only
+- **`compose up -d`** = same, minus the attach and minus the SIGINT→down handler.
+- **Therefore: `kill -9` of the foreground CLI leaves workers RUNNING** (the daemon owns them). Only
   Ctrl-C (SIGINT) tears down, and only because the handler explicitly calls `compose::down`.
 
 This gives docker-compose muscle memory (Ctrl-C = clean down) while keeping the daemon decoupled.
@@ -478,7 +540,7 @@ namespace and needs forwarding aliases.
 | Today (`iii worker …`) | Target | Action | Back-compat |
 |---|---|---|---|
 | `add` | `worker add` | keep; drop `--reset-config`; **no longer auto-starts** | `--reset-config` → deprecation warning, no-op; auto-start removal gated behind compose-mode (legacy config.yaml mode still auto-starts) — **BREAKING vs today**, warned ≥1 release |
-| `reinstall` (`crates/iii-worker/src/cli/app.rs:69`) | `worker add --force` | **remove**, alias | `reinstall` → prints "use `add --force`", runs it |
+| `reinstall` (`crates/iii-worker/src/cli/app.rs:69`) | `worker reinstall` (= `worker add --force`) | keep as alias of `add --force` | both work; **ALWAYS re-runs setup + install scripts** (no longer skips on a current-looking lock) |
 | `update` | `worker update` | keep + new flags | unchanged base behavior |
 | `remove` / `clear` | `worker remove [--clear-artifacts]` / `worker clear` | keep both | `remove` without the flag still does not clear (matches today) |
 | `list` | `worker list` | keep | identical |
@@ -490,18 +552,22 @@ namespace and needs forwarding aliases.
 | `exec` | `worker exec` | keep; generalize target to host/worker/sandbox | identical for the worker target |
 | `sync` (`crates/iii-worker/src/cli/app.rs:157`) | (removed) | **remove**; `compose up` reconciles, `iii.lock` still pins | `sync` → "use `compose up`"; `sync --frozen` → `compose up --frozen` / `compose validate --frozen` **preserving the lock-drift exit code (3)** |
 | `verify` (`crates/iii-worker/src/cli/app.rs:164`) | `compose validate` | **rename** | `verify` → alias to `compose validate` |
-| `sandbox …` | `worker compose sandbox …` (+ `worker sandbox` alias) | keep | both paths work; `sandbox::*` unchanged |
+| `sandbox` / `worker sandbox` | `iii trigger sandbox::*` | **remove the bespoke command** (D9) | retire once `iii trigger` supports async/streaming + upload/download; `sandbox::*` / `sandbox::fs::*` functions kept, invoked as a regular worker via `trigger` |
+| `iii console` | `iii trigger::console` | **remove the command** (D9) | console becomes a worker invoked via trigger; `trigger::console` replaces it |
 | hidden `worker-manager-daemon` (`crates/iii-worker/src/cli/app.rs:225`) | internal `iii __process-daemon` / worker-ops serve | keep hidden | unchanged entry mechanism |
 | hidden `sandbox-daemon` (`crates/iii-worker/src/cli/app.rs:220`) | internal `iii __sandbox-daemon` | keep hidden | unchanged |
-| `iii project init` (emits config.yaml) | emits `worker-compose.yml` | **change scaffold output** | template repo updated; see [migration.md](migration.md) |
+| (none) | `iii --compose [-f <file>]` | **new** | boots engine + `compose up`; the tutorial one-liner (§3.1) |
+| top-level `iii up` / `iii down` / `iii ps` / `iii logs` | `iii worker compose {up,down,status,logs}` | **DROP the top-level aliases** | canonical is `iii worker compose …` + `iii --compose`; no marquee top-level verbs (D3) |
+| `iii project init` (emits config.yaml) | emits `worker-compose.yaml` | **change scaffold output** | template repo updated; see [migration.md](migration.md) |
 | top-level `iii worker` download-exec hop (`engine/src/cli/mod.rs`) | native subtree | **remove the exec hop** | `iii worker` still works; now in-process |
 
 **Config-file migration is ONE tool:** `iii migrate` / `migrate::config_yaml` (NOT a `compose
-import` helper). It reads an existing `config.yaml` and emits an equivalent `worker-compose.yml` (port
+import` helper). It reads an existing `config.yaml` and emits an equivalent `worker-compose.yaml` (port
 from the `iii-worker-manager` entry, each worker → a compose node, `iii-exec` blocks → process-daemon
-`scripts.start` entries). It emits only runtime/topology into the compose file and does **not** touch
-config: workers re-register their own defaults at boot, and operators re-apply any tuned values with
-`iii worker config set`. `config.yaml` stays read-only behind a
+`scripts.start` entries). It carries runtime/topology **and** each worker's `config:` blob **into** the
+compose file's per-worker `config:` block (where it overlays the worker's shipped `defaults.yaml`);
+nothing is dropped. Operators can then re-tune any value with `iii worker config set`, which writes the
+change back into the active compose file. `config.yaml` stays read-only behind a
 format-detection bridge for ≥3 releases; details and the cloud cutover live in
 [migration.md](migration.md).
 
@@ -512,24 +578,25 @@ format-detection bridge for ≥3 releases; details and the cloud cutover live in
 
 ## 10. `iii worker config` — the single config surface
 
-There is exactly ONE config surface. Per-worker configuration is owned end-to-end by the
-`configuration` worker: each worker registers its own config schema + initial value at boot by calling
-`configuration::register(id, schema, initial_value)` from its own code/SDK; the store persists the
-value, and the worker reads via `configuration::get` and hot-reloads off the configuration trigger.
-There is no config in `iii.worker.yaml` and none in `worker-compose.yml`, so there is no "effective
-merged view" to compute and no compose-side config command.
+There is exactly ONE config surface. Per-worker configuration lives in the worker's shipped
+**`defaults.yaml`**, overridden by the **`worker-compose.yaml`** `config:` block (so config IS a merged
+field: `defaults.yaml` ◁ compose base `config:` ◁ target-overlay `config:`). The **optional**
+`configuration` worker is a read/update layer over that: it resolves the effective merged value,
+validates a `set` against the worker's JSON schema, and **writes runtime changes back into the active
+`worker-compose.yaml`** (the compose file the worker was started from), never into `defaults.yaml`. It
+errors when no compose file is found, and iii runs fine without it (config is then static, resolved at
+start). There IS an effective merged view now; there just is no separate `./data/configuration` store.
 
 | Surface | Command | Function(s) | Scope | Semantics |
 |---|---|---|---|---|
-| **Per-worker CRUD** | `iii worker config <W> get\|set\|edit\|list` | `configuration::{get,set,list}` | one worker's stored config entry (`config-worker:<id>`) | direct read/write of the **stored** value in the `configuration` worker; `set` mutates the store at runtime; `edit` opens `$EDITOR` on the resolved entry |
+| **Per-worker CRUD** | `iii worker config <W> get\|set\|edit\|list` | `configuration::{get,set,list}` | one worker's effective config entry (`config-worker:<id>`) | `get`/`list` read the **merged** value (`defaults.yaml` ◁ compose); `set` writes the override back into the active `worker-compose.yaml` (never `defaults.yaml`) and hot-reloads; `edit` opens `$EDITOR` on the resolved entry |
 
-`config-worker:<id>` is purely the **addressing scheme** for an entry (entry id == worker id),
-resolved inside the `configuration` worker — it is not a field anyone writes in compose. See
-[configuration-and-bootstrap.md](configuration-and-bootstrap.md) for the store and the
-`config-worker:<id>` URI scheme (which resolves to a `ConfigurationEntry{id}` in the `configuration`
-worker — there is no `config-worker` worker). The only expansion applied to a stored value is
-`${VAR}`/env expansion on read; configuration is **not** one of the merged compose fields (the 4-layer
-runtime merge chain in [worker-compose.md](worker-compose.md) never touches config).
+`config-worker:<id>` is the **addressing scheme** for an entry (entry id == worker id), resolved by the
+optional `configuration` worker against the active compose file plus the `defaults.yaml` floor. See
+[configuration-and-bootstrap.md](configuration-and-bootstrap.md) for the resolution chain and the
+`config-worker:<id>` URI scheme (which resolves to a `ConfigurationEntry{id}`; there is no
+`config-worker` worker). On read, `${VAR}`/env expansion is applied; configuration is one of the merged
+compose fields (the merge chain in [worker-compose.md](worker-compose.md) now includes `config`).
 
 **Redaction:** every config-reading path (`worker config`, `worker info`, `worker ps`) redacts
 secret-tagged values to `***` by default; `--reveal` un-redacts. Secret tagging and the
@@ -555,6 +622,12 @@ display gate.
 
 ## 12. Open questions
 
+The CLI-surface question itself is **ratified**, not open: the canonical surface is
+`iii worker compose …`, the tutorial one-liner is `iii --compose` (boot engine + `compose up`), and
+bare `iii` starts the engine only. There are **no** top-level `iii up` / `iii down` / `iii ps` /
+`iii logs` aliases, the `iii console` command is removed in favor of `iii trigger::console`, and the
+bespoke `iii worker sandbox` command retires in favor of `iii trigger` (D3/D9). What remains open:
+
 1. **`sources` wire compat duration.** Accept singular `source` + array `sources` for exactly one
    release, or keep singular on the wire and fan out to a `Vec` only in the CLI? **Recommended
    default:** dual-accept for one release, then drop `source` — it makes multi-source `add` a
@@ -563,7 +636,8 @@ display gate.
    `~/.iii/{workers,images,managed}` is machine-global and shared across projects, so a true GC needs
    reference-counting across all known projects. **Recommended default:** ship project-scoped
    `--unused` now; defer a daemon-side global GC pass.
-3. **Compose file `version:` evolution and the CLI.** When `iii up`/`iii migrate` reads an older
-   `version:`, does it auto-upgrade in place, warn, or refuse? **Recommended default:** warn + run for
-   a higher *minor* (additive), refuse with "upgrade iii" for a higher *major*. The schema policy is
-   owned by [worker-compose.md](worker-compose.md); the CLI only surfaces the error.
+3. **Compose file `version:` evolution and the CLI.** When `iii --compose` / `iii worker compose up` /
+   `iii migrate` reads an older `version:`, does it auto-upgrade in place, warn, or refuse?
+   **Recommended default:** warn + run for a higher *minor* (additive), refuse with "upgrade iii" for a
+   higher *major*. The schema policy is owned by [worker-compose.md](worker-compose.md); the CLI only
+   surfaces the error.

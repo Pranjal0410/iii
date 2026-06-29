@@ -26,7 +26,7 @@ and the owners, and this is a 9.**
   connected", or daemon-death. The data shapes exist (`ProcState`, `last_exit`); the dev-facing
   strings don't.
 - `engine-and-gateway.md`: drain "force-halted M" is "surfaced as a `ComposeEvent`" — but *where* the
-  developer sees it (in `iii logs`? a separate stream?) is unspecified.
+  developer sees it (in `iii worker logs`? a separate stream?) is unspecified.
 
 **Fix:** add a dev-facing error-message catalog to `process-daemon.md` and `engine-and-gateway.md`
 mirroring the worker-compose §13 catalog (stable code, example string, the fix line). Minimum set:
@@ -79,12 +79,12 @@ cheap — it's reading state that already exists.
 ### 4. Measure TTHW for real; make the install wait legible
 
 **Principle:** #2 first-five-minutes · #7 speed is a feature.
-The 2.1s in the `iii up` mock is orchestration only. The honest first-run TTHW for a new user is
-`curl|sh` download + `iii init` + `iii up` *including `npm install` of two workers* — currently
-unmeasured. A 30–90s silent `npm install` inside `iii up` reads as "hung" without progress.
+The 2.1s in the `iii --compose` mock is orchestration only. The honest first-run TTHW for a new user is
+`curl|sh` download + `iii project init` + `iii --compose` *including `npm install` of two workers* — currently
+unmeasured. A 30–90s silent `npm install` inside `iii --compose` reads as "hung" without progress.
 
 **Fix:** (a) commit to a measured TTHW budget in `lifecycle-and-onboarding.md` §1 and verify it once
-the path is buildable; (b) show install progress in the `iii up` stream
+the path is buildable; (b) show install progress in the `iii --compose` stream
 (`~ math-worker  installing (npm install) …`) so the wait is legible, not a frozen cursor.
 
 ---
@@ -92,11 +92,11 @@ the path is buildable; (b) show install progress in the `iii up` stream
 ### 5. Keep configuration to one surface
 
 **Principle:** #1 Usable (intuitive) · Pit of Success.
-Per-worker configuration has exactly one surface: `iii worker config set <id> …` → `configuration::*`.
-The configuration worker owns each entry end-to-end; the value lives in the store, the worker
-registers its own schema + initial value at boot, and there is no compose `config:` field and no
-"effective merged view" to confuse it with. Keep it that way — don't reintroduce a second config
-command or a compose-side projection that collides on the word "config".
+Per-worker configuration has exactly one runtime surface: `iii worker config set <id> …` →
+`configuration::*`. The effective value is a merged view (`defaults.yaml` ◁ compose `config:` ◁ target),
+and the optional `configuration` worker writes runtime changes back into the active `worker-compose.yaml`
+(never `defaults.yaml`). There is exactly one *command* surface; keep it that way, do not add a second
+config command that collides on the word "config".
 
 **Fix:** none needed beyond holding the line: `iii worker config` stays the single get/set/edit
 surface in `cli-and-functions.md` §10.
@@ -120,11 +120,13 @@ clap arm over functions that exist, and it removes a whole class of flaky-teardo
 
 **Principle:** #4 escape hatches · Pit of Success (make the wrong thing hard).
 `secrets.md` documents the footguns honestly but doesn't prevent them:
-- A secret in inline `environment:` is committed to git forever — only *warned* (`W0xx`), not blocked.
-- `iii ps` / `worker info` redact store entries but **not** env-borne secrets.
+- A secret in inline `environment:` or inline `config:` is committed to git forever (both live in the
+  committed compose file), only *warned* (`W0xx`), not blocked.
+- `iii worker ps` / `worker info` redact secret-tagged `config:` entries but **not** env-borne secrets.
 
-**Fix:** (a) apply the Rule-4 name-heuristic redaction to env values in `ps`/`info`, not just store
-entries; (b) keep the inline-secret warning but make it appear at `up` time too, not only `validate`.
+**Fix:** (a) apply the Rule-4 name-heuristic redaction to env values in `ps`/`info`, not just config
+entries; (b) keep the inline-secret warning but make it appear at `worker compose up` time too, not only
+`validate`.
 
 ---
 
@@ -142,12 +144,12 @@ entries; (b) keep the inline-secret warning but make it appear at `up` time too,
     honest in the spec but silent at runtime; a re-adopted `owned:false` process after a daemon crash
     has no context. One line in the orphan-sweep output. (Principle #5.)
 
-11. **Ring-buffer log loss isn't surfaced.** After a daemon crash, default `iii logs` returns empty
+11. **Ring-buffer log loss isn't surfaced.** After a daemon crash, default `iii worker logs` returns empty
     with no hint the in-memory ring was wiped. Print "ring buffer reset on daemon restart — use
     `--durable` for history". (Principle #5.)
 
 12. **DX Measurement is a 3/10 — add one feedback seam.** The spec has no instrumentation. Even a
-    minimal opt-in TTHW timer on first `iii up` (local-only) would make the headline claim
+    minimal opt-in TTHW timer on first `iii --compose` (local-only) would make the headline claim
     verifiable over time. (Principle: chef-for-chefs — you can't improve what you don't measure.)
 
 ---
@@ -170,5 +172,5 @@ entries; (b) keep the inline-secret warning but make it appear at `up` time too,
 2. **P2 (4–7)** during implementation — measurable wins, mostly additive.
 3. **P3 (8–12)** as polish before each phase ships.
 
-Re-run a DX audit against a *running* `iii up` once Phase 3 (the daemon) is buildable — that's when
+Re-run a DX audit against a *running* `iii --compose` once Phase 3 (the daemon) is buildable — that's when
 TTHW, error messages, and the macOS degraded mode become testable instead of inferred.

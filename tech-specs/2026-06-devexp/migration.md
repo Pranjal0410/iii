@@ -28,21 +28,23 @@ And `registry/api/iii-config-production.yaml` uses **every primitive this overha
 workers:
   - name: iii-worker-manager        # → baked into the engine (worker-gateway); entry DELETED
     config: { port: 49134 }
-  - name: iii-http                  # → these config values disappear from any file; iii-http
+  - name: iii-http                  # → these config values are CARRIED into the compose config: block
     config: { port: 3111, host: 0.0.0.0, cors: { allowed_origins: ["${CORS_ALLOWED_ORIGINS:*}"] } }
   - name: iii-exec                  # → DELETED engine builtin; becomes a compose worker scripts.start
     config:
       exec:
         - bun run --enable-source-maps dist/index-production.js   # this launches the API itself
-  - name: iii-observability         # → config disappears from any file; iii-observability
+  - name: iii-observability         # → config carried into the compose config: block; iii-observability
     config: { enabled: ${OTEL_ENABLED:true}, ... }
 ```
 
-The `config:` blocks above are the **legacy input shape only**. They do not survive the migration:
-there is no `config:` in `iii.worker.yaml` and none in `worker-compose.yml`. Per-worker configuration
-is owned end-to-end by the `configuration` worker — each worker registers its own schema + initial
-value at boot via `configuration::register(id, schema, initial_value)` from its own code/SDK
-([configuration-and-bootstrap.md](configuration-and-bootstrap.md)).
+The `config:` blocks above are the **legacy input shape**, and `iii migrate` carries each of them
+**into the worker's `config:` block in the generated `worker-compose.yaml`** (the `iii-worker-manager`
+`port` is the exception: it is hoisted to the compose top-level `port:`). They are not discarded.
+Per-worker configuration resolves as `defaults.yaml` ◁ compose `config:` block: a worker ships its
+defaults in `defaults.yaml`, and the compose file overrides per target. The **optional**
+`configuration` worker reads the effective value and writes runtime changes back into the active
+compose file, never into `defaults.yaml` ([configuration-and-bootstrap.md](configuration-and-bootstrap.md)).
 
 The load-bearing line is `iii-exec`: in production it is the launcher for the registry API server
 itself (`bun run … dist/index-production.js`; the dev variant `registry/api/iii-config.yaml` runs
@@ -51,7 +53,7 @@ itself (`bun run … dist/index-production.js`; the dev variant `registry/api/ii
 launching.** Likewise, if `--config config.yaml` support is dropped before the Dockerfile flips, a
 version-skewed deploy is an outage.
 
-**Decision: `config.yaml` and `worker-compose.yml` COEXIST for ≥3 releases.** The reader keeps
+**Decision: `config.yaml` and `worker-compose.yaml` COEXIST for ≥3 releases.** The reader keeps
 accepting `--config <legacy>.yaml` through Phase 4. The cloud config is the *last* thing to migrate,
 behind a staging canary, never the first.
 
@@ -63,9 +65,9 @@ behind a staging canary, never the first.
 and `WorkerCompose` is specified the same way ([worker-compose.md](worker-compose.md)). The two file
 shapes are therefore **mutually unparseable, not softly forward-compatible**:
 
-| Surface | `config.yaml` (legacy) | `worker-compose.yml` (new) |
+| Surface | `config.yaml` (legacy) | `worker-compose.yaml` (new) |
 |---|---|---|
-| `workers:` | a **LIST** of `{name, image?, config?}` | a **MAP** keyed by instance id — **no `config:` block**; per-worker configuration is registered by the worker itself into the `configuration` worker at boot |
+| `workers:` | a **LIST** of `{name, image?, config?}` | a **MAP** keyed by instance id — **carries a per-worker `config:` block** that overrides the worker's `defaults.yaml` |
 | top-level `port:` | rejected (`deny_unknown_fields`) — port lives inside the `iii-worker-manager` entry | required/marquee scalar |
 | Adding a key for the other shape | parse error | parse error |
 
@@ -74,19 +76,19 @@ a legacy `workers: [ {name…} ]` list into a compose file. So a probe is **mand
 
 **Decision: detect by FILENAME first, content-sniff as the fallback.**
 
-1. **Filename is authoritative.** `worker-compose.yml` / `worker-compose.yaml` → compose parser.
+1. **Filename is authoritative.** `worker-compose.yaml` / `worker-compose.yml` → compose parser.
    `config.yaml` (or any path passed to legacy `--config`) → `EngineConfig` parser.
 2. **Content-sniff only for ambiguous explicit paths** (e.g. `--compose foo.yml` or `--config foo.yml`
    where the name doesn't disambiguate): peek the top-level `workers` node. A **sequence** ⇒ legacy
    `EngineConfig`; a **mapping** (or a top-level `port:`) ⇒ compose. A file that is neither shape fails
-   fast with "this is neither a config.yaml nor a worker-compose.yml — see `iii migrate`."
+   fast with "this is neither a config.yaml nor a worker-compose.yaml — see `iii migrate`."
 3. **Never auto-convert on read.** The reader picks a parser; it does not rewrite. Conversion is the
    explicit job of `iii migrate` (§9).
 
 ```mermaid
 flowchart TD
     A[engine boot / CLI reads a boot file] --> B{filename?}
-    B -->|worker-compose.yml| C[WorkerCompose parser]
+    B -->|worker-compose.yaml| C[WorkerCompose parser]
     B -->|config.yaml| D[EngineConfig parser]
     B -->|ambiguous path| E{top-level workers node}
     E -->|mapping / has port:| C
@@ -104,12 +106,12 @@ shape-agnostic during coexistence.
 ## 3. The six-phase rollout
 
 Each phase is a shippable release with a single boolean gate, explicit entry/exit criteria, and a
-named acceptance test. **`config.yaml` and `worker-compose.yml` coexist for the whole of Phases 0–4.**
+named acceptance test. **`config.yaml` and `worker-compose.yaml` coexist for the whole of Phases 0–4.**
 
 ```mermaid
 flowchart LR
     P0["Phase 0\nDual-parser\n--compose"] --> P1["Phase 1\nlock split\n+ iii migrate"]
-    P1 --> P2["Phase 2\nworkers register config\n(per worker, boot-read)"]
+    P1 --> P2["Phase 2\nconfig into compose config:\nover defaults.yaml"]
     P2 --> P3["Phase 3\nprocess-daemon\nIII_PROCESS_DAEMON=1"]
     P3 --> P4["Phase 4\nbake gateway\ndelete iii-worker-manager/iii-exec\n(cloud canary)"]
     P4 --> P5["Phase 5\nremove config.yaml\n+ alias cleanup"]
@@ -117,36 +119,41 @@ flowchart LR
 
 ### Phase 0 — Dual-parser, zero behavior change
 
-The engine learns to *read* `worker-compose.yml` and lower it to the existing
+The engine learns to *read* `worker-compose.yaml` and lower it to the existing
 `EngineConfig{modules,workers}` (`engine/src/workers/config.rs:29-35`). **Compose is a front-end skin
 over today's boot path.** `iii-worker-manager`, `iii-exec`, pidfiles, and `setsid` detach are all
-UNCHANGED. No daemon, no process-ownership change, no store re-homing.
+UNCHANGED. No daemon, no process-ownership change, no config-source re-homing.
 
 | | |
 |---|---|
 | **Flag** | `--compose <file>` (opt-in; `config.yaml` stays the default boot path) |
 | **Entry** | none (first phase) |
-| **Exit** | A compose file boots the **exact same worker set** as the equivalent `config.yaml`; a golden-file test proves byte-identical lowered `EngineConfig`. |
+| **Exit** | A compose file boots the **exact same worker set** as the equivalent `config.yaml`; a golden-file test proves byte-identical lowered `EngineConfig` (including the per-worker `config:` blocks lowered to today's worker-entry `config`). |
 | **Acceptance gate** | **Port the 854-line reload suite** (`engine/tests/config_reload_e2e.rs` 271L, `reload_manager_unit.rs` 312L, `reload_scope_unit.rs` 271L) to compose semantics. These assert the 500ms-debounced file watcher reloads without crashing, errors on broken config, and *removes worker function registrations on worker removal* (`config_reload_e2e.rs:117,165,212`). This is the single most-tested engine behavior; it is the Phase-0 gate, **not a footnote**. |
 
 > **Why reload is the gate.** [configuration-and-bootstrap.md](configuration-and-bootstrap.md) replaces
 > the `config.yaml` watcher (`config.rs:785-849`) with a compose watcher. Compose reconcile is
 > *strictly harder* than today's reload: a topology change must drive the process-daemon (start/stop
-> children) AND the configuration store, not just re-register functions. Proving the watcher contract
-> with no daemon and no store in the loop, first, isolates the regression surface.
+> children) AND re-resolve the per-worker `config:` blocks, not just re-register functions. Proving the
+> watcher contract with no daemon and no config resolution in the loop, first, isolates the regression
+> surface.
 
-### Phase 1 — `iii.lock`/declared-state split + `iii migrate`
+### Phase 1 — per-compose `iii.lock` split + `iii migrate`
 
-Ship the package.json/lockfile split ([worker-compose.md](worker-compose.md), Track 08) and the
-one-shot converter `iii migrate` / fn `migrate::config_yaml` (§9). Compose becomes writable by
-`worker add` (dual-write: edits whichever of `config.yaml`/`worker-compose.yml` exists).
+Ship the package.json/lockfile split ([worker-compose.md](worker-compose.md), Track 08), now with the
+lock **local to each compose file** (one `iii.lock` per `worker-compose.yaml`, sitting beside it and
+pinning the deps for THAT compose (there is no machine-global lock; D5), and the one-shot converter
+`iii migrate` / fn `migrate::config_yaml` (§9). `iii migrate` **carries each legacy worker's `config:`
+blob into the generated compose `config:` block** (and hoists the `iii-worker-manager` `port` to the
+compose top-level `port:`); the values are not dropped. Compose becomes writable by `worker add`
+(dual-write: edits whichever of `config.yaml`/`worker-compose.yaml` exists, beside its own lock).
 
 | | |
 |---|---|
 | **Flag** | `iii migrate` is opt-in tooling; dual-write is automatic by detected file |
 | **Entry** | Phase 0 shipped; compose boots identically to config.yaml |
-| **Exit** | `iii migrate` round-trips **both SDK examples** (`sdk/packages/{node,python}/iii-example/config.yaml`) AND **both cloud configs** (`registry/api/iii-config.yaml`, `iii-config-production.yaml`) to compose that boots byte-identically; `migrate` is itself the function `migrate::config_yaml`. |
-| **Acceptance gate** | `migrate_roundtrip_*` tests: parse legacy → emit compose → lower compose → assert lowered `EngineConfig` equals the legacy-lowered one for all four canonical configs. |
+| **Exit** | `iii migrate` round-trips **both SDK examples** (`sdk/packages/{node,python}/iii-example/config.yaml`) AND **both cloud configs** (`registry/api/iii-config.yaml`, `iii-config-production.yaml`) to compose that boots byte-identically (config blobs carried into the compose `config:` blocks); each emitted compose gets its own `iii.lock` beside it; `migrate` is itself the function `migrate::config_yaml`. |
+| **Acceptance gate** | `migrate_roundtrip_*` tests: parse legacy → emit compose (with carried `config:` blocks) → lower compose → assert lowered `EngineConfig` equals the legacy-lowered one for all four canonical configs. |
 
 The lock extension is its own net-new slice (see §11): `declared_dependencies` + `manifest_hash`
 (`crates/iii-worker/src/cli/lockfile.rs:32,39`) must cover the compose-level declarations so
@@ -156,24 +163,30 @@ lock — a `(None, Some)` lock is *rejected*. Bump `LOCKFILE_VERSION` (`lockfile
 on-disk shape changes; the additive `declared_dependencies` field is backward-compatible by being
 `Option`.
 
-### Phase 2 — Configuration owned by the `configuration` worker, one worker at a time, behind boot-read
+### Phase 2 — Per-worker config moves into the compose `config:` block over `defaults.yaml`, one worker at a time
 
-Each worker takes ownership of its OWN configuration end-to-end: it calls
-`configuration::register(id, schema, initial_value)` from its own code/SDK **at boot**, reads its
-value via `configuration::get`, and hot-reloads off the configuration trigger
-([configuration-and-bootstrap.md](configuration-and-bootstrap.md)). This reuses the **proven**
-boot-read-off-disk pattern shipped for `iii-state` (#1860) and `iii-observability` (commit b38a5646).
-**Do NOT big-bang this.** Restart-tier fields are boot-read directly off
-`./data/configuration/<id>.yaml` with a `catch_unwind` fallback so a bad stored value cannot brick
-startup; live fields read through `configuration::get`.
+Per-worker configuration moves to its end-state source of truth: each worker ships its defaults in a
+**`defaults.yaml`**, and the **`worker-compose.yaml` `config:` block** overrides per target. The
+effective value resolves as `defaults.yaml` ◁ compose `config:`, mediated by the **optional**
+`configuration` worker, which reads the effective config and writes runtime changes back into the
+active compose file (never into `defaults.yaml`, and it errors if no compose file is found)
+([configuration-and-bootstrap.md](configuration-and-bootstrap.md)). The `configuration` worker is NOT
+mandatory and NOT auto-injected: iii runs with zero workers, including no configuration worker, and
+`up` does not hard-fail without it (config is then static, resolved at start). This reuses the
+**proven** `configuration::{register,set,get}` externalization already shipped for `iii-state` (#1860)
+and `iii-observability` (commit b38a5646); what changes is the **source of truth**, from a
+`./data/configuration` store to the worker's `defaults.yaml` overridden by the active compose file.
+**Do NOT big-bang this.** Restart-tier fields resolve at boot from `defaults.yaml` ◁ compose with a
+`catch_unwind` fallback so a bad value cannot brick startup; live fields read through
+`configuration::get`.
 
 | | |
 |---|---|
-| **Flag** | per-worker (the worker registers its own config at boot or not yet); no global flag |
+| **Flag** | per-worker (the worker resolves config from `defaults.yaml` ◁ compose, or not yet); no global flag |
 | **Entry** | Phase 1 shipped |
-| **Exit (per worker)** | the worker registers its schema + initial value at boot and boots from the store; no `config.yaml`/compose config to be present or absent; restart-tier fields boot-read off disk |
+| **Exit (per worker)** | the worker ships a `defaults.yaml` and resolves its effective config from `defaults.yaml` ◁ the compose `config:` block; runtime changes (when the optional configuration worker is present) write back into the active compose file; restart-tier fields resolve at boot with a `catch_unwind` fallback to `defaults.yaml` |
 | **Sequence** | `iii-observability` is **already done**. Then `iii-http`, `iii-stream`, `iii-sandbox`, `iii-cron`, `iii-queue`, `iii-pubsub`, `iii-bridge` — **each its own PR + release-soak.** |
-| **Acceptance gate** | for each worker: a `config_store_<worker>_e2e` test boots with no inline config and asserts identical behavior; a corrupt-store test asserts `catch_unwind` falls back to the worker's own registered default. |
+| **Acceptance gate** | for each worker: a `config_store_<worker>_e2e` test boots with config carried in the compose `config:` block and asserts identical behavior; a corrupt-value test asserts `catch_unwind` falls back to the worker's own `defaults.yaml`. |
 
 This is the only part of the migration with a shipped precedent — lean on it, and treat each worker
 as an independent, revertible change.
@@ -205,7 +218,7 @@ cutover — see §8.**
 |---|---|
 | **Flag** | none in the engine; the cloud Dockerfile flip is the gated change |
 | **Entry** | Phase 3 daemon default-on and trusted (the registry API can no longer launch via `iii-exec` once it's deleted, so the daemon's `process::start` must be production-grade first) |
-| **Exit** | cloud `Dockerfile` flips to `iii up --compose worker-compose.prod.yml`; a **staging canary runs a full release before prod** |
+| **Exit** | cloud `Dockerfile` flips to `iii --compose worker-compose.prod.yaml` (equivalently `iii worker compose up --compose worker-compose.prod.yaml`); a **staging canary runs a full release before prod** |
 | **Acceptance gate** | staging registry API serves traffic under the compose boot for one full release with no cwd/stdout/`${VAR}` regressions (§8) |
 
 ### Phase 5 — Remove `config.yaml` + CLI alias cleanup
@@ -294,8 +307,9 @@ Three behavior reversals need explicit, phased handling (the CLI surface itself 
 
 | Gap | Risk | Decision |
 |---|---|---|
-| **`status` default flip** (live TUI → one-shot dump; `--watch` for the old behavior) | `watch iii worker status` and CI that parses the TUI break; a TUI→data-dump change can't be warned *inside* the old TUI | **Ship `iii ps` / `iii worker info` data dumps in an earlier phase (Phase 1/3), leave `status` as-is, and flip `status`'s default LAST (Phase 5).** Decouple the new data surfaces from the default change. |
-| **`add` losing auto-start** (declarative-only: edits `worker-compose.yml` + `iii.lock`, does NOT spawn) | today's quickstart (`quickstart.mdx:36`) relies on auto-start; breaks every doc and muscle-memory | **Gate behind compose-mode**: in legacy `config.yaml` mode `add` keeps auto-starting; only in compose mode is it declarative. `add --up` reconciles immediately for users who want the old feel. Don't change `add` semantics independent of the file format. |
+| **`status` default flip** (live TUI → one-shot dump; `--watch` for the old behavior) | `watch iii worker status` and CI that parses the TUI break; a TUI to data-dump change can't be warned *inside* the old TUI | **Ship `iii worker compose status` / `iii trigger worker::list` data dumps in an earlier phase (Phase 1/3), leave `status` as-is, and flip `status`'s default LAST (Phase 5).** Decouple the new data surfaces from the default change. The canonical surface is `iii worker compose …` + `iii --compose`; the spec does NOT add top-level `iii up`/`iii down`/`iii ps`/`iii logs` aliases (D3), so there is nothing to migrate consumers *toward* on that front. |
+| **`add` losing auto-start** (declarative-only: edits `worker-compose.yaml` + `iii.lock`, does NOT spawn) | today's quickstart (`quickstart.mdx:36`) relies on auto-start; breaks every doc and muscle-memory | **Gate behind compose-mode**: in legacy `config.yaml` mode `add` keeps auto-starting; only in compose mode is it declarative. `add --up` reconciles immediately for users who want the old feel. Don't change `add` semantics independent of the file format. |
+| **`iii console` removal + `iii worker sandbox` retirement** | scripts and docs invoke `iii console` and `iii worker sandbox` | **`iii console` is removed in favor of `iii trigger::console`** (console becomes a worker; Anderson's migration); **`iii worker sandbox` retires in favor of `iii trigger`** once `iii trigger` gains async/streaming + upload/download (D9). Keep the `sandbox::*`/`sandbox::fs::*` functions; retire only the bespoke commands. |
 | **`sync --frozen` drift contract folding into `compose up --frozen`** | `sync`'s `manifest_hash` drift detection (`managed.rs:599,741`; `lockfile.rs:306-314`) is a real CI gate (`sync_drift_adversarial.rs` exists); folding it in could silently stop CI failing on drift | **`compose up --frozen` MUST preserve the exact drift exit-code / W-code that `sync --frozen` returns.** Add a `compose_up_frozen_drift` test that asserts the same non-zero exit on a stale lock. |
 
 ---
@@ -307,12 +321,12 @@ Of **64 test files** across `crates/iii-worker/tests` + `engine/tests`, roughly 
 
 | Suite | Files | Treatment | Phase |
 |---|---|---|---|
-| **`config_*_integration` family** | `config_crud`, `config_clear`, `config_force`, `config_managed`, `config_path_type`, `config_crossplatform` (6) | **Rewritten** against the compose + configuration-store model — they are built around `config.yaml` write/read (`append_worker`, `ConfigYamlSnapshot`, `merge_yaml_configs` from `config_file.rs`) | 5 |
+| **`config_*_integration` family** | `config_crud`, `config_clear`, `config_force`, `config_managed`, `config_path_type`, `config_crossplatform` (6) | **Rewritten** against the compose `config:`-block + `defaults.yaml` model — they are built around `config.yaml` write/read (`append_worker`, `ConfigYamlSnapshot`, `merge_yaml_configs` from `config_file.rs`) | 5 |
 | **Engine reload suites** | `config_reload_e2e` (271L), `reload_manager_unit` (312L), `reload_scope_unit` (271L) — 854L | **Ported** to compose-watch semantics — these are the **Phase-0 acceptance gate**, not deletions | 0 |
 | **`reload_diff_unit`** | 1 | updated for compose diff semantics | 0 |
 | **`sync_drift_adversarial`** | 1 | retargeted to `compose up --frozen`; exit-code preserved (§6) | 1 |
 | **`worker_trigger_integration` / `worker_trigger_e2e`** | 2 | updated when `start/stop/restart/logs/status` move to `process::*` (aliases keep them green mid-window) | 3 |
-| **`project_init_e2e` + `fixtures/templates/*/template.yaml`** | scaffolder | assertions change: scaffold emits `worker-compose.yml`, not `config.yaml` | 1 |
+| **`project_init_e2e` + `fixtures/templates/*/template.yaml`** | scaffolder | assertions change: scaffold emits `worker-compose.yaml` (+ a per-compose `iii.lock` beside it), not `config.yaml` | 1 |
 | **`worker_manager_integration`** | 1 | survives (it tests the OCI/libkrun `runtime-adapter`, not the port) — rename only, for sanity | 3 |
 | **Sandbox suite** | ~10 | mostly insulated (sandbox-daemon is already function-first); `sandbox_*` tests that boot via `config.yaml` fixtures need the dual-parser | 0 |
 | **New suites** | — | `migrate_roundtrip_*`, `config_store_<worker>_e2e`, `process_daemon_killstorm_soak`, `compose_up_frozen_drift` | 1–4 |
@@ -326,8 +340,8 @@ release; **Phase 5** = `grep config.yaml` zero, full suite green.
 
 ## 8. The cloud cutover (highest-stakes surface)
 
-`registry/api/iii-config-production.yaml` + `iii-config.yaml` each become a `worker-compose.prod.yml` /
-`worker-compose.yml`. The dangerous conversion is `iii-exec` → `scripts.start`: prod runs `bun run
+`registry/api/iii-config-production.yaml` + `iii-config.yaml` each become a `worker-compose.prod.yaml` /
+`worker-compose.yaml`. The dangerous conversion is `iii-exec` → `scripts.start`: prod runs `bun run
 --enable-source-maps dist/index-production.js`. Today's `ExecWorker` spawns at
 `start_background_tasks` with `Stdio::inherit()` (`engine/src/workers/shell/worker.rs:45-66`). If the
 daemon's `scripts.start` differs *at all* in env/cwd/stdout handling, the API could:
@@ -347,30 +361,41 @@ got expansion for free at the file level today.
 
 1. Keep `iii-exec` as a thin shim that forwards to `process::start` for ≥1 release, so the *existing*
    cloud config keeps working unchanged during the daemon-trust period.
-2. Convert `iii-config-production.yaml` → `worker-compose.prod.yml`:
+2. Convert `iii-config-production.yaml` → `worker-compose.prod.yaml` (the legacy per-worker `config:`
+   blobs are carried INTO the compose `config:` blocks, over each worker's `defaults.yaml`; they do not
+   disappear):
 
    ```yaml
    version: "1"
-   port: 49134
+   port: 49134                           # the iii-worker-manager port, hoisted to top-level
    workers:
      registry-api:                       # was the iii-exec block
        runtime: { workspace: . }         # WORKDIR /app — cwd must match Dockerfile
        scripts:
          start: bun run --enable-source-maps dist/index-production.js
-     iii-http:                           # no config: block — iii-http registers its own
-     iii-observability:                  # cors/port/otel schema into the configuration worker at boot
+     iii-http:                           # cors/port carried into the compose config: (over defaults.yaml)
+       config:
+         port: 3111
+         host: 0.0.0.0
+         cors: { allowed_origins: ["${CORS_ALLOWED_ORIGINS:*}"] }
+     iii-observability:                  # otel settings carried into the compose config: block
+       config:
+         enabled: ${OTEL_ENABLED:true}
    ```
 3. Flip `registry/api/Dockerfile:20,24` (`COPY iii-config-production.yaml .` + the `CMD`) to copy the
-   compose file and run `iii up --compose worker-compose.prod.yml` — **only after** the engine release
-   that supports compose ships, and **only after** the staging canary serves a full release clean.
+   compose file and run `iii --compose worker-compose.prod.yaml` (equivalently
+   `iii worker compose up --compose worker-compose.prod.yaml`); **only after** the engine release that
+   supports compose ships, and **only after** the staging canary serves a full release clean.
 4. Keep `--config` accepting `config.yaml` through Phase 4; delete it in Phase 5. A version skew where
    the deployed Dockerfile passes `--config iii-config-production.yaml` to an engine that dropped
    config.yaml support = prod outage — so the reader is the *last* thing removed.
 
 CI (`registry/.github/workflows/ci.yml`) migrates and goes green on the dev compose **before** prod
-flips.
+flips. The committed compose file carries `cors`/`port`/`otel` in its `config:` blocks, so the
+`${VAR}` references in those blocks must still expand on read (secrets stay out of the inline `config:`
+and ride `env_file` + `${VAR}`; see [secrets.md](secrets.md)).
 
-### How `iii cloud deploy` consumes `worker-compose.yml`
+### How `iii cloud deploy` consumes `worker-compose.yaml`
 
 `iii cloud deploy --config <file>` is a real, shipped passthrough subcommand (`engine/src/main.rs:301`,
 parse-verified at `main.rs:458`) handled by the **external** `iii-cloud-cli` (`registry.rs:90`,
@@ -379,7 +404,8 @@ parse-verified at `main.rs:458`) handled by the **external** `iii-cloud-cli` (`r
 | Compose field | Cloud behavior |
 |---|---|
 | `workers`, `runtime.package`, `depends_on` | **honored** — the declared graph and pinned packages deploy as-is |
-| `iii.lock` | **the deploy manifest** — cloud installs the resolved, hash-pinned state (`worker-compose.yml` alone has `:latest`/no hashes and cannot reproducibly reinstall remotely) |
+| `config:` (per-worker block) | **honored**; the per-worker `config:` overrides (over each worker's `defaults.yaml`) deploy with the worker, and secrets stay out of it (`env_file` + `${VAR}`, see [secrets.md](secrets.md)) |
+| `iii.lock` | **the deploy manifest**; cloud installs the resolved, hash-pinned state from the lock beside that compose file (`worker-compose.yaml` alone has `:latest`/no hashes and cannot reproducibly reinstall remotely) |
 | `port` | **ignored / assigned by cloud** — the multi-tenant runtime allocates the listener |
 | `runtime.workspace: ./dir` | **rejected for deploy** — local-only source; a deployable worker MUST be `runtime.package:` |
 | `env_file` | **rejected / redirected** — secrets go through the cloud secrets backend, not a local file (see [secrets.md](secrets.md)) |
@@ -387,7 +413,7 @@ parse-verified at `main.rs:458`) handled by the **external** `iii-cloud-cli` (`r
 **The host process-ownership model (`iii-process-daemon`) is host-dev-only.** Cloud runs its own
 multi-tenant orchestrator; it does not parent worker PIDs via the daemon. The daemon is the *local*
 zombie-elimination mechanism, not a deploy substrate. This boundary is stated so devs don't expect
-`iii up` to deploy.
+`iii --compose` / `iii worker compose up` to deploy.
 
 ---
 
@@ -399,7 +425,7 @@ Three downstream consumers of the renamed function API, in two repos plus this o
 |---|---|---|---|
 | **`tuiii`** | in-repo (`/Users/sergio/Documents/workspaces/iii/tuiii`) | hard-codes `worker::start/stop/logs/list` (§5) | **Update in the same change set** as the daemon — repoint to `process::*` / `process::ps`; the forwarding aliases (§5) cover the window for everyone else |
 | **`iii-console`** (GUI) | external (`iii-hq/...`, `registry.rs:70`, download-exec) | function-API consumer; renamed ids no-op its buttons | Covered by the function-id alias window (§5); the console repo updates on its own cadence within the deprecation cycle. Flagged as an external co-migration dependency. |
-| **`iii-cloud`** (deploy CLI) | external (`iii-hq/iii-cloud-cli`, `registry.rs:90`, download-exec) | must learn to consume `worker-compose.yml` + `iii.lock` (§8) before config.yaml dies | Cloud is the Phase-4 gate; `config.yaml` stays alive specifically until `iii-cloud-cli` reads compose |
+| **`iii-cloud`** (deploy CLI) | external (`iii-hq/iii-cloud-cli`, `registry.rs:90`, download-exec) | must learn to consume `worker-compose.yaml` + the per-compose `iii.lock` (§8) before config.yaml dies | Cloud is the Phase-4 gate; `config.yaml` stays alive specifically until `iii-cloud-cli` reads compose |
 
 ### Distribution / self-update (M13)
 
@@ -420,19 +446,36 @@ download.
 
 ---
 
-## 10. Multi-machine: out of scope (ruling)
+## 10. Multi-host hub (v1)
 
-`worker-compose.yml` and the `iii-process-daemon` are a **single-host** model — one daemon per machine
-(`~/.iii/daemon/daemon.lock`), the direct parent of every local PID. Devs will ask "can `iii up` deploy
-workers across two boxes?" The answer is **no**:
+iii is a **connection hub**, not a fleet orchestrator. The engine **manages nothing**: it never spawns,
+never parents a PID, never supervises a worker lifecycle. It is a pure connection/registry/trigger/
+routing plane that **reports availability** via a **`worker_available`** trigger (plus the live-connection
+registry). A **"running worker" is any process connected to the engine**, started by anything: the
+`iii-process-daemon`, docker, systemd/launchd, a bash script, a tmux session, or by hand. The process
+that ran `iii worker compose up` supervises the workers **it** started; `iii-process-daemon` is that
+runner's local supervisor (the zombie-free option for locally spawned workers), one option among
+docker/systemd/bash, not the universal owner of every PID.
 
-> **Ruling: worker-compose.yml + the daemon are single-host. Multi-host orchestration is iii Cloud's
-> job (§8). The CLI's `--address`/`--port` connect to a remote *engine* for triggering and inspection
-> (`iii trigger`, `iii ps` against a remote port) but NOT for process management — the daemon only
-> parents local processes.**
+Devs will ask "can `iii worker compose up` run workers across two boxes?" The answer is **yes, as a
+hub**, with local lifecycle management:
 
-This one paragraph rules out a whole class of confusion about the boundary between "local compose" and
-"cloud deploy."
+> **Ruling: multi-host is in scope as a hub model. A `worker-compose.yaml` MAY `depends_on` REMOTE
+> workers; readiness resolves through the engine's `worker_available` trigger. Multiple machines may
+> each run `iii worker compose up` against ONE shared engine, and the engine reports every connected
+> worker (local or remote) as available. Cross-host status/inspection works through the engine
+> (`iii trigger worker::list`, the worker forms over `--address`/`--port` against the shared engine).**
+
+What stays **bounded in v1**: **cross-host LIFECYCLE management is local-per-runner.** Each runner
+manages only the workers it started on its own host; **cross-host `stop`/`restart` of a worker on
+another host is not a v1 promise** (the engine manages no worker, and a daemon only parents its own
+children). You can *see* a remote worker through the engine and `depends_on` it, but you stop/restart it
+from the host that started it. **Fleet-scale orchestration remains iii Cloud's job** (§8); the CLI's
+`--address`/`--port` connect to the shared *engine* for triggering, inspection, and readiness gating,
+not for managing PIDs on another box.
+
+This bounds the confusion between "local compose against a shared hub" (in scope) and "cloud deploy /
+cross-host lifecycle orchestration" (iii Cloud).
 
 ---
 
@@ -444,9 +487,10 @@ and tests, not a schema field:
 | Subproject | Status today | Phase | Notes |
 |---|---|---|---|
 | **`env_file` loader** | does not exist anywhere | 1 | precedence ladder (highest→lowest): host process env > inline `environment:` > `env_file[n]` > … > `env_file[0]` (**later-listed file wins**). Coordinate with the daemon for *when* env is applied (process launch). |
-| **`config-worker:<id>` addressing scheme + resolver** | zero repo hits | 1–2 | the addressing scheme for a configuration entry (entry id == worker id), resolved **inside the `configuration` worker** ([configuration-and-bootstrap.md](configuration-and-bootstrap.md)). It is not a field anyone writes in compose; there is no compose `config:` field at all. |
-| **`iii.lock` declared-layer extension** | lock is a single engine entry today | 1 | extend `manifest_hash`/`declared_dependencies` to cover compose declarations; respect the `(manifest_hash, declared_dependencies)` pairing invariant (`lockfile.rs:274-280`); bump `LOCKFILE_VERSION` only if on-disk shape changes. |
-| **Compose reconcile-on-edit watcher** | the config.yaml watcher exists (`config.rs:785-849`) but is simpler | 0 (watcher) → 3 (daemon-driven reconcile) | replaces the config.yaml notify watcher; a topology change must drive the daemon AND the store, which is why the ported reload suite is the Phase-0 gate. |
+| **`config-worker:<id>` addressing scheme + resolver** | zero repo hits | 1–2 | the addressing scheme for a worker's config entry (entry id == worker id), resolved by the **optional `configuration` worker** against the active compose file (+ `defaults.yaml` fallback) ([configuration-and-bootstrap.md](configuration-and-bootstrap.md)). The primary form is an inline per-worker `config:` block in compose; `config-worker:<id>` is the addressing scheme when a worker references an external source. |
+| **`defaults.yaml` per-worker config floor** | only the seven built-ins externalize config; third-party workers don't ship one | 1–2 | each worker ships a `defaults.yaml` of its default config; effective config = `defaults.yaml` ◁ compose `config:`. Point the seven built-ins' read/write at the compose-backed source; let external/third-party workers ship a `defaults.yaml`. |
+| **per-compose `iii.lock` declared-layer extension** | lock is a single engine entry today | 1 | make the lock **local to each compose file** (one `iii.lock` beside each `worker-compose.yaml`; D5), and extend `manifest_hash`/`declared_dependencies` to cover compose declarations; respect the `(manifest_hash, declared_dependencies)` pairing invariant (`lockfile.rs:274-280`); bump `LOCKFILE_VERSION` only if on-disk shape changes. |
+| **Compose reconcile-on-edit watcher** | the config.yaml watcher exists (`config.rs:785-849`) but is simpler | 0 (watcher) → 3 (daemon-driven reconcile) | replaces the config.yaml notify watcher; a topology change must drive the daemon AND re-resolve the per-worker `config:` blocks, which is why the ported reload suite is the Phase-0 gate. |
 
 ---
 
