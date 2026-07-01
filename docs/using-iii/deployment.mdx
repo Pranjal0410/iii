@@ -21,8 +21,8 @@ command surface as it stabilizes.
 
 Step-by-step deploy guides for common hosts:
 
-- [Deploy to Railway](./deploy-railway) — volume-backed engine, private IPv6 networking, Railway edge TLS.
-- [Deploy to Fly.io](./deploy-fly) — Fly Machines, 6PN private networking, Fly Proxy TLS.
+- [Deploy to Railway](./deploy-railway): volume-backed engine, private IPv6 networking, Railway edge TLS.
+- [Deploy to Fly.io](./deploy-fly): Fly Machines, 6PN private networking, Fly Proxy TLS.
 
 These build on the Docker patterns below.
 
@@ -374,7 +374,7 @@ volumes:
   engine. Keep credentials in environment variables; `${VAR:default}` in `config.yaml` is expanded by
   the **engine process**, so the variables must be in the engine container's environment. The
   generated `.env` carries `RABBITMQ_USER` / `RABBITMQ_PASS`, but Compose only uses `.env` to
-  substitute the compose file itself — it does **not** forward those into the container. Add
+  substitute the compose file itself; it does **not** forward those into the container. Add
   `env_file: .env` (or an explicit `environment:` list) to the `iii` service, or the engine boots
   with `Environment variable 'RABBITMQ_USER' not set`. Switching a stateful worker to a remote
   adapter after first boot also requires updating the persisted configuration entry, not only the
