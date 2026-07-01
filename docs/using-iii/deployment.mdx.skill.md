@@ -386,8 +386,10 @@ defaults favor fast iteration; production wants the opposite. Adjust the manifes
   real signal: `node dist/index.js`, not `npx tsx watch src/index.ts`.
 - `scripts.install`: install from a lockfile without dev dependencies: `npm ci --omit=dev`.
 - `env`: inject production configuration. Keep secrets out of the file and supply them from the
-  environment. The keys `III_URL` and `III_ENGINE_URL` are ignored; the engine sets the connection
-  URL.
+  environment. For **engine-managed** workers, the manifest keys `III_URL` and
+  `III_ENGINE_URL` are ignored; the engine sets the connection URL. For workers you run
+  yourself (Compose services, Fly apps, Railway services), set `III_URL` in the container
+  environment and pass it to `registerWorker(process.env.III_URL)`.
 - `runtime.base_image`: pin a specific base image so builds are reproducible.
 - `resources`: set explicit `cpus` and `memory` for the worker's sandbox (defaults are 2 vCPU /
   2048 MiB, capped at 4 / 4096).
@@ -406,11 +408,9 @@ Workers reach the engine in one of two ways, and which one you use decides how i
 - **Connect over WebSocket**: your own workers (and any worker you choose to run yourself) run as
   their own container and point `III_URL` at the engine service. This is the portable, Compose-native
   pattern.
-- **Engine-managed** (added with `iii worker add`): the engine runs them itself in libkrun
-  **micro-VMs**, including registry workers like `database`, `storage`, `harness`, and `iii-sandbox`.
-  They run wherever the engine runs, so they ship inside the engine image, which must include the
-  `iii worker` tooling (the `iii-worker` binary), and the host needs hardware virtualization
-  (`/dev/kvm` on Linux, Apple Silicon on macOS).
+- **Engine-managed** (added with `iii worker add`): the engine starts them from `config.yaml`.
+  Workers with `deploy: binary` run as plain child processes; workers with `deploy: bundle` or
+  `deploy: image` boot libkrun guests and need `/dev/kvm`.
 
 ### Engine, adapters, and your own workers
 
@@ -483,53 +483,55 @@ Reference adapters by service name in `config.yaml` (`redis://redis:6379`,
 [Scale out with Redis and RabbitMQ](#scale-out-with-redis-and-rabbitmq). Add as many of your own
 workers as the product needs. Each is another service that connects over `III_URL`.
 
-### Engine-managed workers (micro-VMs)
+### Registry workers (engine-managed)
 
-Workers added with `iii worker add` (registry workers like `database`, `storage`, and `harness`, as
-well as `iii-sandbox`) are run by the engine itself in **libkrun micro-VMs**. The engine records them
-in `config.yaml`, starts each one on boot, and passes it its own config (connection string,
-credentials):
+Workers added with `iii worker add` are started by the engine from `config.yaml`. How they run
+depends on the worker's top-level `deploy:` field in its `iii.worker.yaml` on
+[workers.iii.dev](https://workers.iii.dev):
+
+| `deploy:` | Runtime | Needs `/dev/kvm`? | Typical workers |
+| --- | --- | --- | --- |
+| `binary` | plain child process via `iii-worker` | no | `database`, `shell`, `storage` (binary build) |
+| `bundle` / `image` | libkrun micro-VM guest | yes | `iii-sandbox`, OCI workers, older `bundle` builds |
+
+Declare them in `config.yaml` alongside the in-process workers:
 
 ```yaml
-# config.yaml: managed workers listed alongside the in-process ones
 workers:
   - name: database
     config:
-      url: ${DATABASE_URL}             # e.g. postgres://user:pass@db:5432/app
+      databases:
+        primary:
+          url: ${DATABASE_URL}
   - name: storage
     config:
-      backend: s3                      # see the worker's own config reference
+      buckets:
+        uploads:
+          provider: s3
+          bucket: my-bucket
+          region: us-east-1
 ```
 
-Micro-VMs are managed by **`iii worker`**, the same tool you use to add and manage workers. It is its
-own binary (`iii-worker`) that ships with the install alongside the `iii` engine and embeds the
-micro-VM firmware; it is normally invoked as `iii worker ...`, but the engine also calls it directly.
-This is not a separate language runtime. Running these workers in a container takes more than the
-stock image:
+The `iii-worker` daemon (`iii worker ...`) ships with the install and is what the engine calls to
+start registry workers. Running **binary** registry workers in a container takes more than the stock
+distroless image:
 
-- **The stock `iiidev/iii` image cannot run them.** It is distroless: it ships only the `iii` engine
-  binary, has no shell, and lacks the shared libraries `iii-worker` needs (for example
-  `libcap-ng.so.0`). Copying `iii-worker` into a `FROM iiidev/iii` build is not enough. It fails to
-  load. Build the engine image on a glibc base (for example `debian-slim`) that has `iii-worker`'s
-  library dependencies, and include both `iii` and `iii-worker`.
-- **Bake the workers at build time.** You cannot `RUN iii worker add` in a `FROM iiidev/iii` build (no
-  shell), so install the workers from a shell-capable build stage (or on a host) and carry the
-  artifacts into the final image. This is more than the worker code: copy `iii.lock`, the worker
-  bundles in `~/.iii/workers`, **and** the micro-VM root filesystem presets in `~/.iii/rootfs/<lang>`.
-  The rootfs dominates the image size — a single language preset (for example
-  `~/.iii/rootfs/python`) can be ~600 MB versus tens of MB for the workers themselves — so plan the
-  build context and final image size around it.
-- **Provide the KVM device.** Micro-VMs need hardware virtualization: `/dev/kvm` on a Linux host, or
-  Apple Silicon when running the engine directly on macOS. On hosts without `/dev/kvm` (for example
-  Fly Machines), `iii-sandbox` may still register its functions, but guest execution
-  (`sandbox::run`, OCI workers) does not work.
+- **The stock `iiidev/iii` image cannot run them.** It is distroless: engine-only, no shell, and no
+  `libcap-ng.so.0` for `iii-worker`. Build on a glibc base (for example `debian-slim`) with both
+  `iii` and `iii-worker`.
+- **Bake workers at build time** with `RUN iii worker add <name>` in a shell-capable build stage.
+  Binary workers land in `~/.iii/workers/`; bundle workers also need `~/.iii/rootfs/<lang>` (large).
+- **`deploy: bundle` / `deploy: image` workers need `/dev/kvm`.** On hosts without it (Fly Machines,
+  Railway containers, Docker Desktop on macOS), use `deploy: binary` workers or run libkrun
+  workloads on a KVM-capable Linux host. On those hosts, `iii-sandbox` may register but guest
+  execution (`sandbox::run`, OCI invocations) does not work.
 
 ```yaml
 services:
   iii:
-    image: your-engine-image   # glibc base with iii + iii-worker + baked workers
+    image: your-engine-image   # glibc base with iii + iii-worker + baked binary workers
     devices:
-      - /dev/kvm               # required for micro-VMs
+      - /dev/kvm               # required only for deploy: bundle / deploy: image workers
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - iii_data:/data
@@ -816,10 +818,9 @@ endpoints.
 - [ ] Worker manifests use production `start` / `install` scripts (no watch mode, lockfile installs).
 - [ ] Worker `env` and `resources` set; secrets injected from the environment.
 - [ ] Your own workers run as their own services pointing `III_URL` at the engine.
-- [ ] Engine-managed workers (`database`, `storage`, `harness`, `iii-sandbox`, ...) run on a
-      glibc-based engine image that bundles `iii-worker` and its libraries (not the distroless stock
-      image), with `/dev/kvm` (Linux host, not inside Docker Desktop on macOS), and each is listed
-      in `config.yaml` with its own config/secrets.
+- [ ] Engine-managed registry workers use a glibc-based engine image with `iii-worker` and
+      `libcap-ng0` (not the distroless stock image). `/dev/kvm` only when using `deploy: bundle`
+      or `deploy: image` workers.
 
 **Networking and security**
 
