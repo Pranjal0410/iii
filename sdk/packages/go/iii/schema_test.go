@@ -71,6 +71,7 @@ func TestRegisterFunctionTypedSendsSchema(t *testing.T) {
 			if string(msg["request_format"]) == "null" || len(msg["request_format"]) == 0 {
 				t.Error("registerfunction did not carry an inferred request_format")
 			}
+			jsonEqual(t, msg["metadata"], `{"owner":"typed"}`)
 			id := mustUUID(t, "66666666-6666-6666-6666-666666666666")
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
@@ -87,7 +88,7 @@ func TestRegisterFunctionTypedSendsSchema(t *testing.T) {
 		func(ctx context.Context, req greetReq, _ json.RawMessage) (greetResp, error) {
 			gotReq <- req
 			return greetResp{Message: "hi " + req.Name}, nil
-		})
+		}, RegisterFunctionOptions{Metadata: json.RawMessage(`{"owner":"typed"}`)})
 	if err != nil {
 		t.Fatalf("RegisterFunctionTyped: %v", err)
 	}

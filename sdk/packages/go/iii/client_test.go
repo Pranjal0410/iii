@@ -102,6 +102,50 @@ func TestRegistrationsSentInOrderOnConnect(t *testing.T) {
 	}
 }
 
+// TestRegisterFunctionOptionsCarryMetadata verifies registration metadata is sent on the
+// existing RegisterFunction API without a metadata-specific registration method.
+func TestRegisterFunctionOptionsCarryMetadata(t *testing.T) {
+	m := newMockEngine(t)
+	c := New(m.url)
+	metadata := json.RawMessage(`{"owner":"billing","priority":"high"}`)
+	if err := c.RegisterFunction("meta::registered", func(ctx context.Context, _, _ json.RawMessage) (any, error) {
+		return nil, nil
+	}, RegisterFunctionOptions{Metadata: metadata}); err != nil {
+		t.Fatalf("RegisterFunction: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	got := m.waitFor(func(msgs []map[string]json.RawMessage) bool {
+		return firstWhere(msgs, func(msg map[string]json.RawMessage) bool {
+			return messageType(msg) == string(MsgRegisterFunction) && messageID(msg) == "meta::registered"
+		}) != nil
+	}, 2*time.Second)
+
+	reg := firstWhere(got, func(msg map[string]json.RawMessage) bool {
+		return messageType(msg) == string(MsgRegisterFunction) && messageID(msg) == "meta::registered"
+	})
+	if reg == nil {
+		t.Fatal("no registerfunction frame sent")
+	}
+	jsonEqual(t, reg["metadata"], `{"owner":"billing","priority":"high"}`)
+}
+
+func TestRegisterFunctionRejectsMultipleOptions(t *testing.T) {
+	c := New(DefaultEngineURL)
+	err := c.RegisterFunction("meta::too-many-options", func(ctx context.Context, _, _ json.RawMessage) (any, error) {
+		return nil, nil
+	}, RegisterFunctionOptions{}, RegisterFunctionOptions{})
+	if err == nil {
+		t.Fatal("RegisterFunction accepted multiple options values")
+	}
+}
+
 // TestInboundInvokeRoundtrip exercises the core path: the engine invokes a registered
 // function and the worker replies with an InvocationResult carrying the handler's
 // output, echoing the trace context.

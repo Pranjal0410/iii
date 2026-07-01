@@ -36,7 +36,7 @@ func main() {
 
 	// Exposed over HTTP, so the handler speaks the engine's HTTP envelope: the request
 	// body is under "body", and the response is { status_code, body }.
-	client.RegisterFunction("hello::greet", func(ctx context.Context, data json.RawMessage) (any, error) {
+	client.RegisterFunction("hello::greet", func(ctx context.Context, data, metadata json.RawMessage) (any, error) {
 		var req struct {
 			Body struct {
 				Name string `json:"name"`
@@ -86,8 +86,8 @@ A complete, runnable version lives in the [`iii-example`](../iii-example) module
 | Register worker | `iii.RegisterWorker(url, opts...) *Client` | Create a client and start connecting in the background (the `registerWorker` entry point). |
 | Create | `iii.New(url, opts...) *Client` | Build a client without connecting (call `Connect` yourself). |
 | Connect | `client.Connect(ctx) error` | Start the lifecycle if needed and block until connected. |
-| Register function (typed) | `iii.RegisterFunctionTyped[Req, Resp](client, id, handler)` | Register a function with request/response schemas inferred from the types. |
-| Register function | `client.RegisterFunction(id, handler) error` | Register a function the engine can invoke by name. |
+| Register function (typed) | `iii.RegisterFunctionTyped[Req, Resp](client, id, handler, opts...)` | Register a function with request/response schemas inferred from the types. |
+| Register function | `client.RegisterFunction(id, handler, opts...) error` | Register a function the engine can invoke by name. |
 | Register trigger | `client.RegisterTrigger(id, triggerType, functionID, config, metadata) error` | Bind a trigger (HTTP, cron, queue, …) to a function. |
 | Register trigger type | `client.RegisterTriggerType(id, description, handler) error` | Implement a custom trigger type. |
 | Invoke (await) | `client.Trigger(ctx, TriggerRequest{...})` | Invoke a function and wait for the result. |
@@ -113,6 +113,18 @@ client.RegisterFunction("orders::create", func(ctx context.Context, data, metada
 		return nil, err
 	}
 	return map[string]any{"id": "123", "item": in.Item}, nil
+})
+```
+
+Attach metadata to the function registration with the optional options struct:
+
+```go
+ordersHandler := func(ctx context.Context, data, metadata json.RawMessage) (any, error) {
+	return map[string]any{"ok": true}, nil
+}
+
+client.RegisterFunction("orders::create", ordersHandler, iii.RegisterFunctionOptions{
+	Metadata: json.RawMessage(`{"owner":"billing-team","priority":"high"}`),
 })
 ```
 

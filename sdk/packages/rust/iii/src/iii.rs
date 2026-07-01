@@ -977,6 +977,19 @@ impl IIIClient {
     /// );
     /// ```
     ///
+    /// Registration metadata stays on the builder, so the no-metadata path remains
+    /// clean:
+    /// ```rust,no_run
+    /// # use iii_sdk::{register_worker, InitOptions, RegisterFunction};
+    /// # use serde_json::{json, Value};
+    /// # let worker = register_worker("ws://localhost:49134", InitOptions::default());
+    /// worker.register_function(
+    ///     "orders::create",
+    ///     RegisterFunction::new_async(|input: Value| async move { Ok(input) })
+    ///         .metadata(json!({"owner": "billing-team", "priority": "high"})),
+    /// );
+    /// ```
+    ///
     /// Untyped handler taking `serde_json::Value`:
     /// ```rust,no_run
     /// # use iii_sdk::{register_worker, InitOptions, RegisterFunction};
@@ -2072,7 +2085,8 @@ mod tests {
         let func_ref = iii.register_function(
             "test::reshaped::ordering",
             RegisterFunction::new_async(|input: Value| async move { Ok(input) })
-                .description("reshaped"),
+                .description("reshaped")
+                .metadata(json!({"owner": "sdk"})),
         );
         assert_eq!(func_ref.id, "test::reshaped::ordering");
 
@@ -2080,7 +2094,22 @@ mod tests {
         let stored = funcs.get("test::reshaped::ordering").expect("stored");
         assert_eq!(stored.message.id, "test::reshaped::ordering");
         assert_eq!(stored.message.description.as_deref(), Some("reshaped"));
+        assert_eq!(stored.message.metadata, Some(json!({"owner": "sdk"})));
         assert!(stored.handler.is_some());
+    }
+
+    #[tokio::test]
+    async fn register_function_metadata_builder_is_optional() {
+        let clean = RegisterFunction::new_async(|input: Value| async move { Ok(input) });
+        assert!(
+            clean.message.metadata.is_none(),
+            "metadata should be absent unless the builder method is used"
+        );
+
+        let metadata = json!({"owner": "billing-team", "priority": "high"});
+        let with_metadata = RegisterFunction::new_async(|input: Value| async move { Ok(input) })
+            .metadata(metadata.clone());
+        assert_eq!(with_metadata.message.metadata, Some(metadata));
     }
 
     #[tokio::test]

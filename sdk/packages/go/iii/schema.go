@@ -40,10 +40,15 @@ type TypedHandler[Req any, Resp any] func(ctx context.Context, req Req, metadata
 //
 // Use [Client.RegisterFunction] directly for schemaless functions or when you need to
 // hand the engine a hand-written schema. See [InferSchema] to obtain a type's schema on
-// its own.
-func RegisterFunctionTyped[Req any, Resp any](c *Client, id string, handler TypedHandler[Req, Resp]) error {
+// its own. Pass a single [RegisterFunctionOptions] value to attach registration
+// metadata.
+func RegisterFunctionTyped[Req any, Resp any](c *Client, id string, handler TypedHandler[Req, Resp], opts ...RegisterFunctionOptions) error {
 	if handler == nil {
 		return fmt.Errorf("iii: RegisterFunctionTyped(%q): handler is nil", id)
+	}
+	cfg, err := resolveRegisterFunctionOptions("RegisterFunctionTyped", id, opts)
+	if err != nil {
+		return err
 	}
 
 	reqSchema, err := reflectSchema[Req]()
@@ -59,6 +64,7 @@ func RegisterFunctionTyped[Req any, Resp any](c *Client, id string, handler Type
 		ID:             id,
 		RequestFormat:  reqSchema,
 		ResponseFormat: respSchema,
+		Metadata:       cfg.Metadata,
 	}
 
 	raw := func(ctx context.Context, data json.RawMessage, metadata json.RawMessage) (any, error) {

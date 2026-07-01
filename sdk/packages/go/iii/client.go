@@ -87,6 +87,25 @@ type Client struct {
 // reported with code "invocation_failed" (matching the Rust and Node SDKs).
 type Handler func(ctx context.Context, data json.RawMessage, metadata json.RawMessage) (any, error)
 
+// RegisterFunctionOptions configures a function registration. The zero value preserves
+// the default registration shape.
+type RegisterFunctionOptions struct {
+	// Metadata is arbitrary JSON attached to the function registration. It is stored
+	// with the function and is distinct from the per-invocation metadata passed to
+	// handlers.
+	Metadata json.RawMessage
+}
+
+func resolveRegisterFunctionOptions(name, id string, opts []RegisterFunctionOptions) (RegisterFunctionOptions, error) {
+	if len(opts) == 0 {
+		return RegisterFunctionOptions{}, nil
+	}
+	if len(opts) > 1 {
+		return RegisterFunctionOptions{}, fmt.Errorf("iii: %s(%q): expected at most one RegisterFunctionOptions, got %d", name, id, len(opts))
+	}
+	return opts[0], nil
+}
+
 type registeredFunction struct {
 	message *RegisterFunctionMessage
 	handler Handler
@@ -190,12 +209,17 @@ func (c *Client) setState(s ConnectionState) {
 
 // RegisterFunction registers a function this worker can handle. It may be called before
 // or after Connect; the registration is sent on the next (re)connect. Calling it again
-// with the same id replaces the handler.
-func (c *Client) RegisterFunction(id string, handler Handler) error {
+// with the same id replaces the handler. Pass a single [RegisterFunctionOptions] value
+// to attach registration metadata without changing the registration method.
+func (c *Client) RegisterFunction(id string, handler Handler, opts ...RegisterFunctionOptions) error {
 	if handler == nil {
 		return fmt.Errorf("iii: RegisterFunction(%q): handler is nil", id)
 	}
-	msg := &RegisterFunctionMessage{ID: id}
+	cfg, err := resolveRegisterFunctionOptions("RegisterFunction", id, opts)
+	if err != nil {
+		return err
+	}
+	msg := &RegisterFunctionMessage{ID: id, Metadata: cfg.Metadata}
 	c.mu.Lock()
 	c.functions[id] = registeredFunction{message: msg, handler: handler}
 	c.mu.Unlock()

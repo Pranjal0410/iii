@@ -40,6 +40,18 @@ func Example_helloWorker() {
 	defer client.Close()
 }
 
+func ExampleClient_RegisterFunction_withMetadata() {
+	client := iii.New(iii.DefaultEngineURL)
+
+	handler := func(ctx context.Context, data, metadata json.RawMessage) (any, error) {
+		return map[string]any{"ok": true}, nil
+	}
+
+	client.RegisterFunction("orders::create", handler, iii.RegisterFunctionOptions{
+		Metadata: json.RawMessage(`{"owner":"billing-team","priority":"high"}`),
+	})
+}
+
 // ExampleClient_Trigger invokes a function and awaits its result, then shows the typed
 // error handling: ErrTimeout for a missed deadline and InvocationError for a remote
 // failure.
