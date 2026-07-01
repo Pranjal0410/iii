@@ -128,11 +128,7 @@ async fn drive_apply(harness: &Harness) {
 async fn stored_value(harness: &Harness, raw: bool) -> Value {
     harness
         .engine
-        .call(
-            "configuration::get",
-            json!({ "id": CONFIG_ID, "raw": raw }),
-            None,
-        )
+        .call("configuration::get", json!({ "id": CONFIG_ID, "raw": raw }))
         .await
         .expect("configuration::get")
         .expect("get returns a body")

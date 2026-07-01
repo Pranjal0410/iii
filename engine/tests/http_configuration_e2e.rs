@@ -313,7 +313,6 @@ async fn templated_port_change_rebinds_the_listener() {
         .call(
             "configuration::get",
             json!({ "id": "iii-http", "raw": true }),
-            None,
         )
         .await
         .expect("configuration::get raw")
@@ -488,7 +487,6 @@ async fn env_placeholders_expand_on_read() {
         .call(
             "configuration::get",
             json!({ "id": "iii-http", "raw": true }),
-            None,
         )
         .await
         .expect("configuration::get raw")

@@ -116,7 +116,6 @@ async fn worker_pid_is_stored_and_listed() {
                 "name": "pid-test-worker",
                 "pid": 42000u32,
             }),
-            None,
         )
         .await
         .expect("register call should succeed");
@@ -144,7 +143,6 @@ async fn worker_pid_is_stored_and_listed() {
         .call(
             "engine::workers::info",
             serde_json::json!({ "name": "pid-test-worker" }),
-            None,
         )
         .await
         .expect("info call succeeds")

@@ -355,7 +355,6 @@ pub async fn enqueue_to_topic(engine: &Engine, topic: &str, data: Value) -> anyh
         .call(
             "iii::durable::publish",
             json!({"topic": topic, "data": data}),
-            None,
         )
         .await;
     match result {

@@ -180,7 +180,6 @@ async fn max_value_bytes_hot_applies_and_rejects_oversized_writes() {
         .call(
             "state::set",
             json!({ "scope": "s", "key": "big", "value": "way more than eight bytes" }),
-            None,
         )
         .await;
     let err = oversized.expect_err("oversized write must be rejected");
@@ -192,7 +191,6 @@ async fn max_value_bytes_hot_applies_and_rejects_oversized_writes() {
         .call(
             "state::set",
             json!({ "scope": "s", "key": "ok", "value": 1 }),
-            None,
         )
         .await
         .expect("small write succeeds");
@@ -261,7 +259,6 @@ async fn save_interval_ms_retunes_a_file_backed_save_loop() {
         .call(
             "state::set",
             json!({ "scope": "s", "key": "k", "value": { "v": 1 } }),
-            None,
         )
         .await
         .expect("state::set");

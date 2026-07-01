@@ -614,7 +614,6 @@ async fn env_placeholder_expands_on_read() {
         .call(
             "configuration::get",
             json!({ "id": "iii-queue", "raw": true }),
-            None,
         )
         .await
         .expect("configuration::get raw")

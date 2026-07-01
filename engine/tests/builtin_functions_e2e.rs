@@ -33,7 +33,6 @@ async fn all_functions_on_bare_engine_are_iii_builtins() {
         .call(
             "engine::functions::list",
             json!({ "include_internal": true }),
-            None,
         )
         .await
         .expect("engine::functions::list should succeed");
@@ -100,7 +99,6 @@ async fn functions_info_returns_schemas_for_engine_builtin() {
         .call(
             "engine::functions::info",
             json!({ "function_id": "engine::functions::list" }),
-            None,
         )
         .await
         .expect("engine::functions::info should succeed")
@@ -144,7 +142,6 @@ async fn triggers_list_returns_trigger_types() {
         .call(
             "engine::triggers::list",
             json!({ "include_internal": true }),
-            None,
         )
         .await
         .expect("engine::triggers::list should succeed")
@@ -193,7 +190,6 @@ async fn registered_triggers_list_returns_canonical_envelope() {
         .call(
             "engine::registered-triggers::list",
             json!({ "include_internal": true }),
-            None,
         )
         .await
         .expect("engine::registered-triggers::list should succeed")
@@ -232,11 +228,7 @@ async fn workers_info_returns_full_surface_for_runtime_worker() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let result = engine
-        .call(
-            "engine::workers::info",
-            json!({ "name": "iii-state" }),
-            None,
-        )
+        .call("engine::workers::info", json!({ "name": "iii-state" }))
         .await
         .expect("engine::workers::info should succeed")
         .expect("response should not be None");
