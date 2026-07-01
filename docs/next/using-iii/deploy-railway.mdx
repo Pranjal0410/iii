@@ -16,6 +16,20 @@ Railway differs from a bare-host deploy in three ways that shape the rest of thi
 guide: its private network is IPv6-only, durable state persists on a mounted
 volume, and its edge terminates TLS so you do not run your own reverse proxy.
 
+## Deploy from the template
+
+The fastest path is the starter repo at
+[iii-experimental/railway-template](https://github.com/iii-experimental/railway-template).
+It ships the debian base `Dockerfile`, a Railway-ready `config.yaml`, `railway.json`
+with restart policy `ALWAYS`, and an optional `hello-worker` service for end-to-end
+verification. Fork it or generate a Railway template from a deployed copy of the
+project, then deploy.
+
+After the first deploy, set `PORT=3111` on the engine service (see
+[Public domain, TLS, and routing](#public-domain-tls-and-routing)). The debian
+Dockerfile runs as root, so you do not need `RAILWAY_RUN_UID=0` unless you switch
+to the non-root `iiidev/iii` image.
+
 ## A base image worth reusing
 
 Build a base that contains the engine **and** the `iii-worker` daemon (the
@@ -88,6 +102,14 @@ workers:
       adapter: { name: fs, config: { directory: /data/configuration } }
 ```
 
+<Note>
+  On first boot, seeded worker blocks are copied into the `configuration` worker
+  under `/data/configuration` and stripped from the live `config.yaml`. Later edits
+  to adapter blocks in `config.yaml` have no effect until you update the persisted
+  entry or clear the volume. See
+  [Make storage durable with file_based](./deployment#make-storage-durable-with-file_based).
+</Note>
+
 ## Add workers by declaring them
 
 Each entry above is a worker. That is all there is in iii: everything is a
@@ -125,7 +147,7 @@ over the private network:
 
 | Service | What it is | Key setting |
 | --- | --- | --- |
-| `engine` | the base image above + your `config.yaml` | volume mounted at `/data`; `RAILWAY_RUN_UID=0` so a non-root image can write it; public domain on port `3111` |
+| `engine` | the base image above + your `config.yaml` | volume at `/data`; `PORT=3111` on the public domain; `RAILWAY_RUN_UID=0` only if you use the non-root `iiidev/iii` image directly |
 | `api-worker` (and friends) | your Node/Python/Rust worker code | `III_URL=ws://engine.railway.internal:49134` |
 
 Worker services stay private (no public domain) and reach the engine over
@@ -145,6 +167,26 @@ dials `127.0.0.1` will not find the engine across services; always use the
   set this.
 </Note>
 
+## Deploy with the Railway CLI
+
+```bash
+railway login
+railway init --name my-iii-app
+railway add --service engine
+railway up --ci --service engine
+railway variables --set PORT=3111 --service engine
+railway domain --service engine
+railway logs --service engine
+```
+
+Railway auto-detects a listening port from `EXPOSE`. This Dockerfile exposes
+`49134`, `3111`, and `3112`, so Railway may pick `49134` (worker WebSocket) and
+return `502` for HTTP. Set `PORT=3111` so the edge targets `iii-http`.
+
+If you deploy `FROM iiidev/iii:latest` with a volume instead of the debian base,
+also set `RAILWAY_RUN_UID=0` so the non-root image can write the root-owned
+volume.
+
 ## Public domain, TLS, and routing
 
 Railway's edge is your reverse proxy. It terminates TLS and forwards one public
@@ -154,8 +196,10 @@ domain to one port on one service, so you do not run Caddy or nginx yourself
 domain and `PORT` details.
 
 - Attach the public domain to the **engine** service and target port **3111**,
-  the `iii-http` worker that serves your registered HTTP routes. Railway issues
-  and renews the certificate, so the domain serves HTTPS with no extra config.
+  the `iii-http` worker that serves your registered HTTP routes. Set the service
+  variable `PORT=3111` so Railway's edge routes HTTP to `iii-http` instead of
+  auto-detecting `49134` from `EXPOSE`. Railway issues and renews the
+  certificate, so the domain serves HTTPS with no extra config.
 - A custom domain works the same way: add it on the engine service and point your
   DNS `CNAME` at the Railway target Railway shows you.
 - Keep worker services private. They have no domain and are reachable only on the
@@ -192,8 +236,9 @@ redeploy (or restart) the service for the engine to pick it up.
 Attach a Railway [volume](https://docs.railway.com/volumes) to the engine
 service, mount it at `/data`, and keep every worker's persistence path under it
 (`sqlite:/data/iii.db`, `/data/queue_store`, `/data/state_store.db`). Railway
-mounts volumes as `root`, so a non-root image needs `RAILWAY_RUN_UID=0` to write
-the volume.
+mounts volumes as `root`. The debian Dockerfile in this guide runs as root, so
+no extra UID setting is needed. If you deploy the non-root `iiidev/iii` image
+directly, set `RAILWAY_RUN_UID=0`.
 
 For object storage, use the `storage` worker's **remote providers**, which need
 no local disk:
@@ -229,14 +274,16 @@ no local disk:
 
 ## What cannot run on Railway
 
-Railway containers do **not** expose `/dev/kvm`. Any worker that boots a
-micro-VM therefore cannot run there:
+Railway containers do **not** expose `/dev/kvm`. Guest execution that needs
+libkrun therefore cannot run there:
 
-- `iii-sandbox` and any OCI/image (managed) worker. They boot guests via
-  libkrun. See [Engine-managed workers (micro-VMs)](./deployment#engine-managed-workers-micro-vms).
-- Bundle workers, which are dispatched through the same libkrun rails. (Note
-  some workers are moving to `deploy: binary`, which **does** run on Railway as a
-  plain process. Check the worker's current type before assuming.)
+- `iii-sandbox` and any OCI/image (managed) worker. The worker may register on
+  boot, but `sandbox::run`, `sandbox::exec`, and similar guest paths need
+  `/dev/kvm`. See
+  [Engine-managed workers (micro-VMs)](./deployment#engine-managed-workers-micro-vms).
+- Bundle workers dispatched through the same libkrun rails. (Some workers are
+  moving to `deploy: binary`, which **does** run on Railway as a plain process.
+  Check the worker's current type before assuming.)
 
 Every other worker runs there, including `deploy: binary` workers, which run as
 plain processes.
@@ -244,17 +291,20 @@ plain processes.
 ## Verify the deployment
 
 Once the engine service is live, the engine log shows each declared worker
-registering, including any it auto-provisioned from the registry. Then call a
-route your worker registered through the public domain:
+registering, including any it auto-provisioned from the registry. Deploy a worker
+service that registers an HTTP route (the
+[hello-worker](https://github.com/iii-experimental/railway-template/tree/main/hello-worker)
+in the starter template is a minimal example), then call it through the public
+domain:
 
 ```bash
-curl https://<your-engine-domain>/orders -X POST \
+curl -s -X POST https://<your-engine-domain>/hello \
   -H 'content-type: application/json' \
-  -d '{ "sku": "abc", "qty": 1 }'
+  -d '{"name":"world"}'
 ```
 
-A response from your handler confirms the full path: Railway edge to `iii-http`
-to your worker to the `database` worker on the volume.
+A `200` with your handler's JSON confirms Railway edge → `iii-http` → your worker
+over the private network.
 
 <Note>
   Redeploying the engine briefly re-registers HTTP routes, which can race a
@@ -283,15 +333,16 @@ This is the Railway-specific layer on top of the general
 
 - [ ] Engine binds `[::]`; worker services dial `ws://engine.railway.internal:49134`, never
       `127.0.0.1`.
-- [ ] Public domain on the engine targets port `3111`; worker services have no public
-      domain.
+- [ ] `PORT=3111` set on the engine service so the public domain targets `iii-http`.
+- [ ] Public domain on the engine; worker services have no public domain.
 - [ ] Raw `49134` exposed (via TCP proxy) only behind an RBAC listener
       ([RBAC](./deployment#rbac)); otherwise keep it on the private network.
 
 **State and resiliency**
 
 - [ ] Volume mounted at `/data`; every worker `file_path` is stored under it.
-- [ ] `RAILWAY_RUN_UID=0` set so a non-root image can write the root-owned volume.
+- [ ] `RAILWAY_RUN_UID=0` set only when using the non-root `iiidev/iii` image with a
+      volume (not needed for the debian Dockerfile in this guide).
 - [ ] No `DO NOT USE IN_MEMORY` warnings in the boot logs.
 - [ ] Single engine service while on `file_based` storage; move to Redis/RabbitMQ before
       scaling to multiple replicas.
