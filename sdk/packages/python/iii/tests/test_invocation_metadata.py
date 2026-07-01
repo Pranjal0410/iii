@@ -70,6 +70,13 @@ def test_mode_positional_for_two_arg_handler():
     assert _metadata_passing_mode(handler) == "positional"
 
 
+def test_mode_positional_for_required_metadata_param():
+    def handler(data, metadata):
+        return None
+
+    assert _metadata_passing_mode(handler) == "positional"
+
+
 def test_mode_keyword_for_keyword_only_metadata():
     def handler(data, *, metadata=None):
         return None
@@ -84,18 +91,31 @@ def test_mode_none_for_single_arg_handler():
     assert _metadata_passing_mode(handler) == "none"
 
 
-def test_mode_keyword_for_var_keyword_handler():
+def test_mode_none_for_unrelated_second_positional_param():
+    # A pre-existing handler with an unrelated optional second parameter must
+    # keep its exact old call shape: handler(data), so `retries` stays 3.
+    def handler(data, retries=3):
+        return None
+
+    assert _metadata_passing_mode(handler) == "none"
+
+
+def test_mode_none_for_var_keyword_handler():
+    # **kwargs handlers previously received no keyword arguments; injecting
+    # metadata into kwargs would change their observable input.
     def handler(data, **kwargs):
         return None
 
-    assert _metadata_passing_mode(handler) == "keyword"
+    assert _metadata_passing_mode(handler) == "none"
 
 
-def test_mode_positional_for_var_positional_handler():
+def test_mode_none_for_var_positional_handler():
+    # *args handlers previously received exactly one argument; appending
+    # metadata would change len(args).
     def handler(*args):
         return None
 
-    assert _metadata_passing_mode(handler) == "positional"
+    assert _metadata_passing_mode(handler) == "none"
 
 
 # --- handler receives invocation metadata when it accepts it ---------------

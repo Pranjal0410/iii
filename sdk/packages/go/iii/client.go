@@ -85,31 +85,9 @@ type Client struct {
 // and stacktrace are preserved, otherwise it is reported with code "invocation_failed"
 // (matching the Rust and Node SDKs).
 //
-// RegisterFunction also accepts metadata-aware function literals with signature
-// func(context.Context, json.RawMessage, json.RawMessage) (any, error). The third
-// argument is the optional per-invocation metadata sidecar.
+// Per-invocation metadata, when the call carries any, rides on ctx rather than the
+// signature (so adding it is non-breaking): read it with [MetadataFromContext].
 type Handler func(ctx context.Context, data json.RawMessage) (any, error)
-
-type normalizedHandler func(ctx context.Context, data json.RawMessage, metadata json.RawMessage) (any, error)
-
-func normalizeHandler(name, id string, handler any) (normalizedHandler, error) {
-	switch h := handler.(type) {
-	case nil:
-		return nil, fmt.Errorf("iii: %s(%q): handler is nil", name, id)
-	case Handler:
-		return func(ctx context.Context, data, _ json.RawMessage) (any, error) {
-			return h(ctx, data)
-		}, nil
-	case func(context.Context, json.RawMessage) (any, error):
-		return func(ctx context.Context, data, _ json.RawMessage) (any, error) {
-			return h(ctx, data)
-		}, nil
-	case func(context.Context, json.RawMessage, json.RawMessage) (any, error):
-		return h, nil
-	default:
-		return nil, fmt.Errorf("iii: %s(%q): handler must be func(context.Context, json.RawMessage) (any, error) or func(context.Context, json.RawMessage, json.RawMessage) (any, error)", name, id)
-	}
-}
 
 // RegisterFunctionOptions configures a function registration. The zero value preserves
 // the default registration shape.
@@ -132,7 +110,7 @@ func resolveRegisterFunctionOptions(name, id string, opts []RegisterFunctionOpti
 
 type registeredFunction struct {
 	message *RegisterFunctionMessage
-	handler normalizedHandler
+	handler Handler
 }
 
 type registeredTriggerType struct {
@@ -235,18 +213,24 @@ func (c *Client) setState(s ConnectionState) {
 // or after Connect; the registration is sent on the next (re)connect. Calling it again
 // with the same id replaces the handler. Pass a single [RegisterFunctionOptions] value
 // to attach registration metadata without changing the registration method.
-func (c *Client) RegisterFunction(id string, handler any, opts ...RegisterFunctionOptions) error {
-	normalized, err := normalizeHandler("RegisterFunction", id, handler)
-	if err != nil {
-		return err
+//
+// Handlers read the optional per-invocation metadata sidecar from their ctx with
+// [MetadataFromContext].
+func (c *Client) RegisterFunction(id string, handler Handler, opts ...RegisterFunctionOptions) error {
+	if handler == nil {
+		return fmt.Errorf("iii: RegisterFunction(%q): handler is nil", id)
 	}
-	cfg, err := resolveRegisterFunctionOptions("RegisterFunction", id, opts)
+	return c.registerFunction("RegisterFunction", id, handler, opts)
+}
+
+func (c *Client) registerFunction(name, id string, handler Handler, opts []RegisterFunctionOptions) error {
+	cfg, err := resolveRegisterFunctionOptions(name, id, opts)
 	if err != nil {
 		return err
 	}
 	msg := &RegisterFunctionMessage{ID: id, Metadata: cfg.Metadata}
 	c.mu.Lock()
-	c.functions[id] = registeredFunction{message: msg, handler: normalized}
+	c.functions[id] = registeredFunction{message: msg, handler: handler}
 	c.mu.Unlock()
 	// Best-effort live send; if disconnected, the registry replay on reconnect covers
 	// it (registration frames are deliberately not buffered — see offline).
@@ -777,7 +761,11 @@ func (c *Client) handleInvoke(ctx context.Context, msg *InvokeFunctionMessage) {
 		return
 	}
 
-	result, herr := c.runHandler(injectTraceContext(ctx, tc), fn.handler, msg.Data, msg.Metadata)
+	// Attach trace context and per-invocation metadata to ctx before invoking the
+	// handler; metadata is delivered out-of-band on ctx (see MetadataFromContext) so the
+	// Handler signature stays stable.
+	hctx := withMetadata(injectTraceContext(ctx, tc), msg.Metadata)
+	result, herr := c.runHandler(hctx, fn.handler, msg.Data)
 	if herr != nil {
 		c.replyInvocation(msg, nil, errorBodyFromHandlerError(herr), tc)
 		return
@@ -792,13 +780,13 @@ func (c *Client) handleInvoke(ctx context.Context, msg *InvokeFunctionMessage) {
 
 // runHandler invokes h, recovering a panic into an error so a panicking handler yields
 // an InvocationResult.error instead of leaving the caller to time out.
-func (c *Client) runHandler(ctx context.Context, h normalizedHandler, data, metadata json.RawMessage) (result any, err error) {
+func (c *Client) runHandler(ctx context.Context, h Handler, data json.RawMessage) (result any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("iii: handler panic: %v", r)
 		}
 	}()
-	return h(ctx, data, metadata)
+	return h(ctx, data)
 }
 
 // errorBodyFromHandlerError maps a handler error to a wire ErrorBody. A typed

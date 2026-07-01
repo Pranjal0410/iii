@@ -103,9 +103,9 @@ func TestRegisterFunctionTypedSendsSchema(t *testing.T) {
 	}
 }
 
-// TestRegisterFunctionTypedDeliversMetadata verifies typed handlers receive the same
-// explicit metadata argument as raw handlers while still receiving a decoded request and
-// inferred schemas.
+// TestRegisterFunctionTypedDeliversMetadata verifies typed handlers can read the
+// per-invocation metadata from ctx (see MetadataFromContext) while still receiving a
+// decoded request and inferred schemas.
 func TestRegisterFunctionTypedDeliversMetadata(t *testing.T) {
 	m := newMockEngine(t)
 
@@ -130,7 +130,8 @@ func TestRegisterFunctionTypedDeliversMetadata(t *testing.T) {
 
 	c := connectClient(t, m)
 	err := RegisterFunctionTyped[greetReq, greetResp](c, "typed::meta",
-		func(ctx context.Context, req greetReq, metadata json.RawMessage) (greetResp, error) {
+		func(ctx context.Context, req greetReq) (greetResp, error) {
+			metadata, _ := MetadataFromContext(ctx)
 			gotReq <- req
 			gotMeta <- metadata
 			return greetResp{Message: "hi " + req.Name}, nil

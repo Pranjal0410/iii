@@ -42,7 +42,9 @@ use crate::{
         UnregisterTriggerMessage, UnregisterTriggerTypeMessage,
     },
     triggers::{Trigger, TriggerConfig, TriggerHandler},
-    types::{Channel, RemoteFunctionData, RemoteFunctionHandler, RemoteTriggerTypeData},
+    types::{
+        Channel, RemoteFunctionData, RemoteFunctionHandlerWithMetadata, RemoteTriggerTypeData,
+    },
 };
 
 use iii_helpers::observability as telemetry;
@@ -171,11 +173,21 @@ impl<C: Serialize, R> TriggerTypeRef<C, R> {
         function_id: impl Into<String>,
         config: C,
     ) -> Result<Trigger, Error> {
+        self.register_trigger_with_metadata(function_id, config, None)
+    }
+
+    /// Register a trigger with compile-time validated trigger config and optional metadata.
+    pub fn register_trigger_with_metadata(
+        &self,
+        function_id: impl Into<String>,
+        config: C,
+        metadata: Option<Value>,
+    ) -> Result<Trigger, Error> {
         self.iii.register_trigger(RegisterTriggerInput {
             trigger_type: self.trigger_type_id.clone(),
             function_id: function_id.into(),
             config: serde_json::to_value(config).map_err(|e| Error::Handler(e.to_string()))?,
-            metadata: None,
+            metadata,
         })
     }
 }
@@ -384,10 +396,10 @@ fn json_schema_for<T: schemars::JsonSchema>() -> Option<Value> {
 }
 
 /// Helper trait used internally to convert a sync function into a
-/// [`RemoteFunctionHandler`].
+/// [`RemoteFunctionHandlerWithMetadata`].
 #[doc(hidden)]
 pub trait IntoSyncHandler<Marker>: Send + Sync + 'static {
-    fn into_handler(self) -> RemoteFunctionHandler;
+    fn into_handler(self) -> RemoteFunctionHandlerWithMetadata;
     fn request_format() -> Option<Value> {
         None
     }
@@ -409,7 +421,7 @@ where
     T: serde::de::DeserializeOwned + schemars::JsonSchema + Send + 'static,
     R: serde::Serialize + schemars::JsonSchema + Send + 'static,
 {
-    fn into_handler(self) -> RemoteFunctionHandler {
+    fn into_handler(self) -> RemoteFunctionHandlerWithMetadata {
         Arc::new(move |input: Value, _metadata: Option<Value>| {
             let output = serde_json::from_value::<T>(input)
                 .map_err(|e| Error::Serde(e.to_string()))
@@ -438,7 +450,7 @@ where
     T: serde::de::DeserializeOwned + schemars::JsonSchema + Send + 'static,
     R: serde::Serialize + schemars::JsonSchema + Send + 'static,
 {
-    fn into_handler(self) -> RemoteFunctionHandler {
+    fn into_handler(self) -> RemoteFunctionHandlerWithMetadata {
         Arc::new(move |input: Value, metadata: Option<Value>| {
             let output = serde_json::from_value::<T>(input)
                 .map_err(|e| Error::Serde(e.to_string()))
@@ -464,10 +476,10 @@ where
 // =============================================================================
 
 /// Helper trait used internally to convert an async function into a
-/// [`RemoteFunctionHandler`].
+/// [`RemoteFunctionHandlerWithMetadata`].
 #[doc(hidden)]
 pub trait IntoAsyncHandler<Marker>: Send + Sync + 'static {
-    fn into_handler(self) -> RemoteFunctionHandler;
+    fn into_handler(self) -> RemoteFunctionHandlerWithMetadata;
     fn request_format() -> Option<Value> {
         None
     }
@@ -484,7 +496,7 @@ pub trait IntoAsyncHandler<Marker>: Send + Sync + 'static {
 fn async_handler_with<F, T, Fut, R>(
     f: F,
     on_bad_request: impl Fn(serde_json::Error) -> Error + Send + Sync + 'static,
-) -> RemoteFunctionHandler
+) -> RemoteFunctionHandlerWithMetadata
 where
     F: Fn(T) -> Fut + Send + Sync + 'static,
     T: serde::de::DeserializeOwned + Send + 'static,
@@ -520,7 +532,7 @@ where
 fn async_handler_with_metadata<F, T, Fut, R>(
     f: F,
     on_bad_request: impl Fn(serde_json::Error) -> Error + Send + Sync + 'static,
-) -> RemoteFunctionHandler
+) -> RemoteFunctionHandlerWithMetadata
 where
     F: Fn(T, Option<Value>) -> Fut + Send + Sync + 'static,
     T: serde::de::DeserializeOwned + Send + 'static,
@@ -563,7 +575,7 @@ where
     Fut: std::future::Future<Output = Result<R, Error>> + Send + 'static,
     R: serde::Serialize + schemars::JsonSchema + Send + 'static,
 {
-    fn into_handler(self) -> RemoteFunctionHandler {
+    fn into_handler(self) -> RemoteFunctionHandlerWithMetadata {
         async_handler_with(self, |e| Error::Serde(e.to_string()))
     }
 
@@ -585,7 +597,7 @@ where
     Fut: std::future::Future<Output = Result<R, Error>> + Send + 'static,
     R: serde::Serialize + schemars::JsonSchema + Send + 'static,
 {
-    fn into_handler(self) -> RemoteFunctionHandler {
+    fn into_handler(self) -> RemoteFunctionHandlerWithMetadata {
         async_handler_with_metadata(self, |e| Error::Serde(e.to_string()))
     }
 
@@ -638,7 +650,7 @@ fn empty_message() -> RegisterFunctionMessage {
 /// - [`response_format`](Self::response_format): overrides any auto-extracted schema.
 pub struct RegisterFunction {
     message: RegisterFunctionMessage,
-    handler: Option<RemoteFunctionHandler>,
+    handler: Option<RemoteFunctionHandlerWithMetadata>,
 }
 
 impl RegisterFunction {
@@ -736,7 +748,12 @@ impl RegisterFunction {
         self
     }
 
-    pub(crate) fn into_parts(self) -> (RegisterFunctionMessage, Option<RemoteFunctionHandler>) {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        RegisterFunctionMessage,
+        Option<RemoteFunctionHandlerWithMetadata>,
+    ) {
         (self.message, self.handler)
     }
 }
@@ -904,7 +921,7 @@ impl IIIClient {
     fn register_function_inner(
         &self,
         message: RegisterFunctionMessage,
-        handler: Option<RemoteFunctionHandler>,
+        handler: Option<RemoteFunctionHandlerWithMetadata>,
     ) -> FunctionRef {
         let id = message.id.clone();
         if id.trim().is_empty() {
@@ -2078,6 +2095,43 @@ mod tests {
 
         assert_eq!(iii.inner.triggers.lock().unwrap().len(), 1);
         trigger.unregister();
+    }
+
+    #[tokio::test]
+    async fn typed_trigger_ref_register_trigger_with_metadata_stores_metadata() {
+        let iii = register_worker("ws://localhost:1234", InitOptions::default());
+        let trigger_type = iii.register_trigger_type(
+            RegisterTriggerType::new("typed-trigger-meta", "typed trigger", NoopTriggerHandler)
+                .trigger_request_format::<Value>(),
+        );
+
+        let metadata = json!({ "owner": "billing-team" });
+        let trigger = trigger_type
+            .register_trigger_with_metadata(
+                "functions.echo",
+                json!({ "foo": "bar" }),
+                Some(metadata.clone()),
+            )
+            .expect("register trigger");
+
+        {
+            let triggers = iii.inner.triggers.lock().unwrap();
+            let stored = triggers.values().next().expect("stored trigger");
+            assert_eq!(stored.metadata, Some(metadata));
+        }
+        trigger.unregister();
+    }
+
+    #[test]
+    fn remote_function_handler_alias_remains_single_arg() {
+        // Compile-time back-compat guard: the public RemoteFunctionHandler alias keeps
+        // its pre-metadata single-argument shape; the sidecar-aware form is the separate
+        // RemoteFunctionHandlerWithMetadata alias.
+        let legacy: crate::types::RemoteFunctionHandler =
+            std::sync::Arc::new(|input| Box::pin(async move { Ok(input) }));
+        let with_meta: crate::types::RemoteFunctionHandlerWithMetadata =
+            std::sync::Arc::new(|input, _metadata| Box::pin(async move { Ok(input) }));
+        drop((legacy, with_meta));
     }
 
     #[tokio::test]

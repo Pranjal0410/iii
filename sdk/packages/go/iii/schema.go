@@ -27,37 +27,9 @@ import (
 // unmarshals the invocation payload into Req before calling it and marshals the returned
 // Resp into the result, so handlers work with concrete types instead of json.RawMessage.
 //
-// RegisterFunctionTyped also accepts metadata-aware function literals with signature
-// func(context.Context, Req, json.RawMessage) (Resp, error). The third argument is the
-// optional per-invocation metadata sidecar.
+// Per-invocation metadata, when the call carries any, rides on ctx rather than the
+// signature (so adding it is non-breaking): read it with [MetadataFromContext].
 type TypedHandler[Req any, Resp any] func(ctx context.Context, req Req) (Resp, error)
-
-type normalizedTypedHandler[Req any, Resp any] func(ctx context.Context, req Req, metadata json.RawMessage) (Resp, error)
-
-type typedHandlerConstraint[Req any, Resp any] interface {
-	~func(context.Context, Req) (Resp, error) |
-		~func(context.Context, Req, json.RawMessage) (Resp, error)
-}
-
-func normalizeTypedHandler[Req any, Resp any, H typedHandlerConstraint[Req, Resp]](name, id string, handler H) (normalizedTypedHandler[Req, Resp], error) {
-	if handler == nil {
-		return nil, fmt.Errorf("iii: %s(%q): handler is nil", name, id)
-	}
-	switch h := any(handler).(type) {
-	case TypedHandler[Req, Resp]:
-		return func(ctx context.Context, req Req, _ json.RawMessage) (Resp, error) {
-			return h(ctx, req)
-		}, nil
-	case func(context.Context, Req) (Resp, error):
-		return func(ctx context.Context, req Req, _ json.RawMessage) (Resp, error) {
-			return h(ctx, req)
-		}, nil
-	case func(context.Context, Req, json.RawMessage) (Resp, error):
-		return h, nil
-	default:
-		return nil, fmt.Errorf("iii: %s(%q): unsupported typed handler", name, id)
-	}
-}
 
 // RegisterFunctionTyped registers a function whose request and response schemas are
 // inferred from the Req and Resp type parameters and advertised to the engine. It is the
@@ -71,10 +43,9 @@ func normalizeTypedHandler[Req any, Resp any, H typedHandlerConstraint[Req, Resp
 // hand the engine a hand-written schema. See [InferSchema] to obtain a type's schema on
 // its own. Pass a single [RegisterFunctionOptions] value to attach registration
 // metadata.
-func RegisterFunctionTyped[Req any, Resp any, H typedHandlerConstraint[Req, Resp]](c *Client, id string, handler H, opts ...RegisterFunctionOptions) error {
-	normalized, err := normalizeTypedHandler[Req, Resp]("RegisterFunctionTyped", id, handler)
-	if err != nil {
-		return err
+func RegisterFunctionTyped[Req any, Resp any](c *Client, id string, handler TypedHandler[Req, Resp], opts ...RegisterFunctionOptions) error {
+	if handler == nil {
+		return fmt.Errorf("iii: RegisterFunctionTyped(%q): handler is nil", id)
 	}
 	cfg, err := resolveRegisterFunctionOptions("RegisterFunctionTyped", id, opts)
 	if err != nil {
@@ -97,14 +68,15 @@ func RegisterFunctionTyped[Req any, Resp any, H typedHandlerConstraint[Req, Resp
 		Metadata:       cfg.Metadata,
 	}
 
-	raw := func(ctx context.Context, data json.RawMessage, metadata json.RawMessage) (any, error) {
+	// Adapt the typed handler to the raw Handler the dispatcher calls.
+	raw := func(ctx context.Context, data json.RawMessage) (any, error) {
 		var req Req
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, &req); err != nil {
 				return nil, &InvocationError{Code: "invalid_request", Message: err.Error()}
 			}
 		}
-		return normalized(ctx, req, metadata)
+		return handler(ctx, req)
 	}
 
 	c.mu.Lock()

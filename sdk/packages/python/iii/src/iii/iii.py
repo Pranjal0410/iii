@@ -68,14 +68,17 @@ log = logging.getLogger("iii.iii")
 def _metadata_passing_mode(handler: Callable[..., Any]) -> str:
     """Decide how (if at all) to forward per-invocation metadata to a handler.
 
-    Inspects the user handler's signature so existing 1-argument handlers
-    keep working unchanged. Returns one of:
+    Only handlers that explicitly declare a parameter named ``metadata``
+    receive the sidecar; every other signature keeps its exact pre-metadata
+    call shape (``handler(data)``), so existing handlers -- including ones
+    with unrelated optional parameters, ``*args``, or ``**kwargs`` -- keep
+    working unchanged. Returns one of:
 
-    - ``"positional"``: pass metadata as the second positional argument
-      (e.g. ``def handler(data, metadata=None)`` or ``def handler(*args)``).
-    - ``"keyword"``: pass metadata as a ``metadata=`` keyword argument
-      (e.g. ``def handler(data, *, metadata=None)`` or ``def handler(data, **kwargs)``).
-    - ``"none"``: the handler only accepts ``data`` -- omit metadata.
+    - ``"positional"``: ``metadata`` is the second positional parameter
+      (e.g. ``def handler(data, metadata=None)``).
+    - ``"keyword"``: ``metadata`` is keyword-only
+      (e.g. ``def handler(data, *, metadata=None)``).
+    - ``"none"``: no ``metadata`` parameter -- omit metadata.
 
     If the signature cannot be introspected (some builtins/C callables),
     falls back to ``"none"`` to preserve back-compat.
@@ -85,22 +88,19 @@ def _metadata_passing_mode(handler: Callable[..., Any]) -> str:
     except (ValueError, TypeError):
         return "none"
 
-    params = list(sig.parameters.values())
+    meta_param = sig.parameters.get("metadata")
+    if meta_param is None:
+        return "none"
+    if meta_param.kind == inspect.Parameter.KEYWORD_ONLY:
+        return "keyword"
+
     positional = [
         p
-        for p in params
+        for p in sig.parameters.values()
         if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
-    has_var_positional = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
-    has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
-
-    meta_param = sig.parameters.get("metadata")
-    if meta_param is not None and meta_param.kind == inspect.Parameter.KEYWORD_ONLY:
-        return "keyword"
-    if len(positional) >= 2 or has_var_positional:
+    if len(positional) >= 2 and positional[1].name == "metadata":
         return "positional"
-    if has_var_keyword:
-        return "keyword"
     return "none"
 
 
@@ -975,8 +975,10 @@ class III:
         containing the trigger payload, and may optionally accept a second
         ``metadata`` argument carrying per-invocation metadata (e.g.
         ``def handler(data, metadata=None)`` or ``def handler(data, *,
-        metadata=None)``).  Existing 1-argument handlers keep working
-        unchanged -- metadata is only forwarded when the signature accepts it.
+        metadata=None)``).  Metadata is only forwarded to handlers that
+        declare a parameter literally named ``metadata``, so existing
+        handlers -- including ones with unrelated extra parameters,
+        ``*args``, or ``**kwargs`` -- keep working unchanged.
 
         ``request_format`` and ``response_format`` are auto-extracted
         from the handler's type hints when omitted or passed as ``None``
