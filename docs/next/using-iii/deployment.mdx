@@ -17,6 +17,15 @@ command surface as it stabilizes.
 
 {/* llm-only: Always verify the claim about iii cloud above, it could have changed since when this document was written. */}
 
+## Platform guides
+
+Step-by-step deploy guides for common hosts:
+
+- [Deploy to Railway](./deploy-railway) — volume-backed engine, private IPv6 networking, Railway edge TLS.
+- [Deploy to Fly.io](./deploy-fly) — Fly Machines, 6PN private networking, Fly Proxy TLS.
+
+These build on the Docker patterns below.
+
 ## Pre-built images on Docker Hub
 
 iii publishes the engine image to [`iiidev/iii`](https://hub.docker.com/r/iiidev/iii). You do not
@@ -515,7 +524,9 @@ stock image:
   `~/.iii/rootfs/python`) can be ~600 MB versus tens of MB for the workers themselves — so plan the
   build context and final image size around it.
 - **Provide the KVM device.** Micro-VMs need hardware virtualization: `/dev/kvm` on a Linux host, or
-  Apple Silicon when running the engine directly on macOS.
+  Apple Silicon when running the engine directly on macOS. On hosts without `/dev/kvm` (for example
+  Fly Machines), `iii-sandbox` may still register its functions, but guest execution
+  (`sandbox::run`, OCI workers) does not work.
 
 ```yaml
 services:
