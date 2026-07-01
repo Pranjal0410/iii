@@ -121,8 +121,9 @@ function extractDocs(item: RustDocItem): string {
   if (codeBlockIdx >= 0) endIdx = Math.min(endIdx, codeBlockIdx)
   return text
     .slice(0, endIdx)
-    // Strip rustdoc intra-doc link markup: [`Foo`](path) / [`Foo`] -> `Foo`
+    // Strip rustdoc intra-doc link markup: [`Foo`](path) / [`Foo`][] / [`Foo`] -> `Foo`
     .replace(/\[(`[^`]+`)\]\([^)]*\)/g, '$1')
+    .replace(/\[(`[^`]+`)\]\[[^\]]*\]/g, '$1')
     .replace(/\[(`[^`]+`)\]/g, '$1')
     .trim()
 }
