@@ -162,7 +162,7 @@ field in its `iii.worker.yaml`: `binary` runs as a plain host process on Railway
 ## The Railway architecture for iii
 
 You can run **every** declarable worker on the **same engine service** by listing
-them in `config.yaml` — `database`, `iii-http`, and the rest share one `/data`
+them in `config.yaml`: `database`, `iii-http`, and the rest share one `/data`
 volume on one Machine. Separate Railway services are optional: use them when you
 want a different language runtime, independent scaling, or stronger isolation.
 Both patterns are valid and can be mixed.
@@ -199,24 +199,24 @@ dials `127.0.0.1` will not find the engine across services; always use the
 ## Create the Railway services
 
 Whether you start from the [template repo](https://github.com/iii-experimental/railway-template)
-or your own fork, create the services explicitly — the guide above describes what
+or your own fork, create the services explicitly. The guide above describes what
 each one does; these are the steps we validated on Railway:
 
-1. **Link the project** — `railway login`, then `railway init --name my-iii-app` (or
+1. **Link the project**: `railway login`, then `railway init --name my-iii-app` (or
    connect the GitHub repo in the Railway dashboard).
-2. **Create the engine service** — `railway add --service engine` (or **New → GitHub
+2. **Create the engine service**: `railway add --service engine` (or **New → GitHub
    Repo** in the dashboard). Point it at the directory with the engine `Dockerfile`.
-3. **Attach a volume** — in the engine service: **Volumes → Add volume**, mount at
+3. **Attach a volume**: in the engine service: **Volumes → Add volume**, mount at
    `/data`.
-4. **Set variables before deploy** — any `${VAR}` placeholders in `config.yaml` must
+4. **Set variables before deploy**: any `${VAR}` placeholders in `config.yaml` must
    exist before the engine boots (see [Secrets and environment](#secrets-and-environment)).
    After the first deploy, set `PORT=3111` so the public domain targets `iii-http`.
-5. **Deploy the engine** — `railway up --ci --service engine`.
-6. **Create worker services** — `railway add --service hello-worker` (no public
+5. **Deploy the engine**: `railway up --ci --service engine`.
+6. **Create worker services**: `railway add --service hello-worker` (no public
    domain). Set `III_URL=ws://engine.railway.internal:49134` (match your engine
    service name). Deploy from the worker subdirectory (`hello-worker/` in the
    template).
-7. **Public domain** — `railway domain --service engine`, then verify with
+7. **Public domain**: `railway domain --service engine`, then verify with
    `POST /hello` ([Verify the deployment](#verify-the-deployment)).
 
 ![Engine service variables including PORT=3111](/next/using-iii/assets/railway-variables.png)
