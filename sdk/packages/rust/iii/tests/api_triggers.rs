@@ -1115,6 +1115,7 @@ async fn conflicting_route_structure_is_rejected() {
             .trigger(TriggerRequest {
                 function_id: "engine::registered-triggers::list".to_string(),
                 payload: json!({ "function_id": function_id }),
+                metadata: None,
                 action: None,
                 timeout_ms: None,
             })

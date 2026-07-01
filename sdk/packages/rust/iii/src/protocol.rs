@@ -19,7 +19,7 @@ pub enum TriggerAction {
 }
 
 /// Request object for `trigger()`. Matches the Node/Python SDK signature:
-/// `trigger({ function_id, payload, action?, timeout_ms? })`
+/// `trigger({ function_id, payload, metadata?, action?, timeout_ms? })`
 ///
 /// ```rust
 /// # use iii_sdk::protocol::{TriggerRequest, TriggerAction};
@@ -28,6 +28,7 @@ pub enum TriggerAction {
 /// TriggerRequest {
 ///     function_id: "my::function".to_string(),
 ///     payload: json!({ "key": "value" }),
+///     metadata: None,
 ///     action: None,
 ///     timeout_ms: None,
 /// };
@@ -36,6 +37,7 @@ pub enum TriggerAction {
 /// TriggerRequest {
 ///     function_id: "my::function".to_string(),
 ///     payload: json!({}),
+///     metadata: None,
 ///     action: Some(TriggerAction::Enqueue { queue: "payments".to_string() }),
 ///     timeout_ms: None,
 /// };
@@ -44,6 +46,7 @@ pub enum TriggerAction {
 pub struct TriggerRequest {
     pub function_id: String,
     pub payload: Value,
+    pub metadata: Option<Value>,
     pub action: Option<TriggerAction>,
     pub timeout_ms: Option<u64>,
 }

@@ -62,6 +62,7 @@ async fn subscribe_and_receive_published_messages() {
     iii.trigger(TriggerRequest {
         function_id: "publish".to_string(),
         payload: json!({"topic": topic, "data": {"message": "Hello PubSub!"}}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -147,6 +148,7 @@ async fn topic_isolation() {
     iii.trigger(TriggerRequest {
         function_id: "publish".to_string(),
         payload: json!({"topic": topic_a, "data": {"for": "a"}}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })

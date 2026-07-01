@@ -84,7 +84,7 @@ func TestRegisterFunctionTypedSendsSchema(t *testing.T) {
 
 	c := connectClient(t, m)
 	err := RegisterFunctionTyped[greetReq, greetResp](c, "typed::greet",
-		func(ctx context.Context, req greetReq) (greetResp, error) {
+		func(ctx context.Context, req greetReq, _ json.RawMessage) (greetResp, error) {
 			gotReq <- req
 			return greetResp{Message: "hi " + req.Name}, nil
 		})
@@ -99,6 +99,61 @@ func TestRegisterFunctionTypedSendsSchema(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("typed handler was not invoked")
+	}
+}
+
+// TestRegisterFunctionTypedDeliversMetadata verifies typed handlers receive the same
+// explicit metadata argument as raw handlers while still receiving a decoded request and
+// inferred schemas.
+func TestRegisterFunctionTypedDeliversMetadata(t *testing.T) {
+	m := newMockEngine(t)
+
+	gotReq := make(chan greetReq, 1)
+	gotMeta := make(chan json.RawMessage, 1)
+	m.onReceive = func(conn *websocket.Conn, msg map[string]json.RawMessage) {
+		if messageType(msg) == string(MsgRegisterFunction) && messageID(msg) == "typed::meta" {
+			if string(msg["request_format"]) == "null" || len(msg["request_format"]) == 0 {
+				t.Error("registerfunction did not carry an inferred request_format")
+			}
+			id := mustUUID(t, "77777777-7777-7777-7777-777777777777")
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = m.send(ctx, conn, &InvokeFunctionMessage{
+				InvocationID: &id,
+				FunctionID:   "typed::meta",
+				Data:         json.RawMessage(`{"name":"grace","count":3}`),
+				Metadata:     json.RawMessage(`{"tenant":"acme"}`),
+			})
+		}
+	}
+
+	c := connectClient(t, m)
+	err := RegisterFunctionTyped[greetReq, greetResp](c, "typed::meta",
+		func(ctx context.Context, req greetReq, metadata json.RawMessage) (greetResp, error) {
+			gotReq <- req
+			gotMeta <- metadata
+			return greetResp{Message: "hi " + req.Name}, nil
+		})
+	if err != nil {
+		t.Fatalf("RegisterFunctionTyped: %v", err)
+	}
+
+	select {
+	case req := <-gotReq:
+		if req.Name != "grace" || req.Count != 3 {
+			t.Errorf("handler got %+v, want name=grace count=3", req)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("typed metadata handler was not invoked")
+	}
+
+	select {
+	case metadata := <-gotMeta:
+		if string(metadata) != `{"tenant":"acme"}` {
+			t.Errorf("metadata = %s, want {\"tenant\":\"acme\"}", metadata)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("typed metadata handler did not receive metadata")
 	}
 }
 

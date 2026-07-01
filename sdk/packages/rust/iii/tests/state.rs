@@ -28,6 +28,7 @@ async fn delete_state(iii: &IIIClient, key: &str) {
         .trigger(TriggerRequest {
             function_id: "state::delete".to_string(),
             payload: json!({"scope": SCOPE, "key": key}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -46,6 +47,7 @@ async fn state_set_new_item() {
         .trigger(TriggerRequest {
             function_id: "state::set".to_string(),
             payload: json!({"scope": SCOPE, "key": key, "value": test_data}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -70,6 +72,7 @@ async fn state_set_overwrite() {
     iii.trigger(TriggerRequest {
         function_id: "state::set".to_string(),
         payload: json!({"scope": SCOPE, "key": key, "value": initial_data}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -80,6 +83,7 @@ async fn state_set_overwrite() {
         .trigger(TriggerRequest {
             function_id: "state::set".to_string(),
             payload: json!({"scope": SCOPE, "key": key, "value": updated_data}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -103,6 +107,7 @@ async fn state_get_existing_item() {
     iii.trigger(TriggerRequest {
         function_id: "state::set".to_string(),
         payload: json!({"scope": SCOPE, "key": key, "value": data}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -113,6 +118,7 @@ async fn state_get_existing_item() {
         .trigger(TriggerRequest {
             function_id: "state::get".to_string(),
             payload: json!({"scope": SCOPE, "key": key}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -132,6 +138,7 @@ async fn state_get_non_existent_item() {
         .trigger(TriggerRequest {
             function_id: "state::get".to_string(),
             payload: json!({"scope": SCOPE, "key": "non-existent-item"}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -150,6 +157,7 @@ async fn state_delete_existing_item() {
     iii.trigger(TriggerRequest {
         function_id: "state::set".to_string(),
         payload: json!({"scope": SCOPE, "key": key, "value": {"test": true}}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -159,6 +167,7 @@ async fn state_delete_existing_item() {
     iii.trigger(TriggerRequest {
         function_id: "state::delete".to_string(),
         payload: json!({"scope": SCOPE, "key": key}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -169,6 +178,7 @@ async fn state_delete_existing_item() {
         .trigger(TriggerRequest {
             function_id: "state::get".to_string(),
             payload: json!({"scope": SCOPE, "key": key}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -185,6 +195,7 @@ async fn state_delete_non_existent_item() {
     iii.trigger(TriggerRequest {
         function_id: "state::delete".to_string(),
         payload: json!({"scope": SCOPE, "key": "non-existent"}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -214,6 +225,7 @@ async fn state_list_all_items_in_scope() {
         iii.trigger(TriggerRequest {
             function_id: "state::set".to_string(),
             payload: json!({"scope": scope, "key": item["id"], "value": item}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -224,6 +236,7 @@ async fn state_list_all_items_in_scope() {
         .trigger(TriggerRequest {
             function_id: "state::list".to_string(),
             payload: json!({"scope": scope}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -257,6 +270,7 @@ async fn state_list_groups_returns_available_scopes() {
     iii.trigger(TriggerRequest {
         function_id: "state::set".to_string(),
         payload: json!({"scope": scope, "key": "anchor", "value": {"present": true}}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -267,6 +281,7 @@ async fn state_list_groups_returns_available_scopes() {
         .trigger(TriggerRequest {
             function_id: "state::list_groups".to_string(),
             payload: json!({}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -289,6 +304,7 @@ async fn state_list_groups_returns_available_scopes() {
     iii.trigger(TriggerRequest {
         function_id: "state::delete".to_string(),
         payload: json!({"scope": scope, "key": "anchor"}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -316,6 +332,7 @@ async fn state_update_applies_partial_updates_via_ops() {
             "key": key,
             "value": {"count": 0, "name": "initial"},
         }),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -329,6 +346,7 @@ async fn state_update_applies_partial_updates_via_ops() {
             "key": key,
             "ops": [{"type": "set", "path": "count", "value": 5}],
         }),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -339,6 +357,7 @@ async fn state_update_applies_partial_updates_via_ops() {
         .trigger(TriggerRequest {
             function_id: "state::get".to_string(),
             payload: json!({"scope": scope, "key": key}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })
@@ -351,6 +370,7 @@ async fn state_update_applies_partial_updates_via_ops() {
     iii.trigger(TriggerRequest {
         function_id: "state::delete".to_string(),
         payload: json!({"scope": scope, "key": key}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -370,6 +390,7 @@ async fn reactive_state() {
     iii.trigger(TriggerRequest {
         function_id: "state::set".to_string(),
         payload: json!({"scope": SCOPE, "key": key, "value": data}),
+        metadata: None,
         action: None,
         timeout_ms: None,
     })
@@ -409,6 +430,7 @@ async fn reactive_state() {
         iii.trigger(TriggerRequest {
             function_id: "state::set".to_string(),
             payload: json!({"scope": SCOPE, "key": key, "value": updated_data}),
+            metadata: None,
             action: None,
             timeout_ms: None,
         })

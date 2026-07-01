@@ -26,7 +26,9 @@ import (
 // TypedHandler is a function handler with a typed request and response. The SDK
 // unmarshals the invocation payload into Req before calling it and marshals the returned
 // Resp into the result, so handlers work with concrete types instead of json.RawMessage.
-type TypedHandler[Req any, Resp any] func(ctx context.Context, req Req) (Resp, error)
+// metadata is the optional per-invocation metadata sidecar (nil when absent), matching
+// [Handler]'s explicit metadata argument.
+type TypedHandler[Req any, Resp any] func(ctx context.Context, req Req, metadata json.RawMessage) (Resp, error)
 
 // RegisterFunctionTyped registers a function whose request and response schemas are
 // inferred from the Req and Resp type parameters and advertised to the engine. It is the
@@ -34,7 +36,7 @@ type TypedHandler[Req any, Resp any] func(ctx context.Context, req Req) (Resp, e
 // engine (and its dashboard / typed callers) to know the function's contract.
 //
 //	iii.RegisterFunctionTyped[CreateOrderRequest, OrderResult](client, "orders::create",
-//	    func(ctx context.Context, req CreateOrderRequest) (OrderResult, error) { ... })
+//	    func(ctx context.Context, req CreateOrderRequest, metadata json.RawMessage) (OrderResult, error) { ... })
 //
 // Use [Client.RegisterFunction] directly for schemaless functions or when you need to
 // hand the engine a hand-written schema. See [InferSchema] to obtain a type's schema on
@@ -59,17 +61,14 @@ func RegisterFunctionTyped[Req any, Resp any](c *Client, id string, handler Type
 		ResponseFormat: respSchema,
 	}
 
-	// Adapt the typed handler to the raw Handler the dispatcher calls. The typed API
-	// works in terms of the decoded request only; per-invocation metadata, if any,
-	// remains available on ctx via MetadataFromContext.
-	raw := func(ctx context.Context, data json.RawMessage) (any, error) {
+	raw := func(ctx context.Context, data json.RawMessage, metadata json.RawMessage) (any, error) {
 		var req Req
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, &req); err != nil {
 				return nil, &InvocationError{Code: "invalid_request", Message: err.Error()}
 			}
 		}
-		return handler(ctx, req)
+		return handler(ctx, req, metadata)
 	}
 
 	c.mu.Lock()

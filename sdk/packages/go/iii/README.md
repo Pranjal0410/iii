@@ -105,7 +105,7 @@ A handler receives the raw JSON payload and returns any value (marshaled into th
 invocation result) or an error:
 
 ```go
-client.RegisterFunction("orders::create", func(ctx context.Context, data json.RawMessage) (any, error) {
+client.RegisterFunction("orders::create", func(ctx context.Context, data, metadata json.RawMessage) (any, error) {
 	var in struct {
 		Item string `json:"item"`
 	}
@@ -140,7 +140,7 @@ type OrderResult struct {
 }
 
 iii.RegisterFunctionTyped[CreateOrderRequest, OrderResult](client, "orders::create",
-	func(ctx context.Context, req CreateOrderRequest) (OrderResult, error) {
+	func(ctx context.Context, req CreateOrderRequest, metadata json.RawMessage) (OrderResult, error) {
 		return OrderResult{ID: "ord_123"}, nil
 	})
 // Advertised request_format:
@@ -149,9 +149,10 @@ iii.RegisterFunctionTyped[CreateOrderRequest, OrderResult](client, "orders::crea
 ```
 
 The handler works with the concrete `CreateOrderRequest` (the SDK unmarshals the payload)
-and returns the typed `OrderResult`. Use `RegisterFunction` for schemaless functions or
-when you want to send a hand-written schema. `iii.InferSchema[T]()` returns the schema for
-a type if you want to inspect or reuse it.
+and returns the typed `OrderResult`; its third argument is the optional per-invocation
+metadata sidecar. Use `RegisterFunction` for schemaless functions or when you want to
+send a hand-written schema. `iii.InferSchema[T]()` returns the schema for a type if you
+want to inspect or reuse it.
 
 ### Invoking functions
 

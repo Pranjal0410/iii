@@ -16,7 +16,7 @@ import (
 func Example_helloWorker() {
 	client := iii.RegisterWorker(iii.DefaultEngineURL) // ws://localhost:49134
 
-	client.RegisterFunction("hello::greet", func(ctx context.Context, data json.RawMessage) (any, error) {
+	client.RegisterFunction("hello::greet", func(ctx context.Context, data, metadata json.RawMessage) (any, error) {
 		var req struct {
 			Body struct {
 				Name string `json:"name"`
@@ -81,7 +81,7 @@ func ExampleRegisterFunctionTyped() {
 	defer client.Close()
 
 	iii.RegisterFunctionTyped[greetRequest, greetResponse](client, "hello::greet",
-		func(ctx context.Context, req greetRequest) (greetResponse, error) {
+		func(ctx context.Context, req greetRequest, metadata json.RawMessage) (greetResponse, error) {
 			return greetResponse{Message: "Hello, " + req.Name + "!"}, nil
 		})
 }
