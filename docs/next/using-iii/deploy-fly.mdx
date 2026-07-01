@@ -115,6 +115,14 @@ workers:
   [Listening on 6PN addresses](https://fly.io/docs/networking/private-networking/#listening-for-connections-on-6pn-addresses).
 </Note>
 
+<Note>
+  On first boot, seeded worker blocks are copied into the `configuration` worker
+  under `/data/configuration` and stripped from the live `config.yaml`. Later edits
+  to adapter blocks in `config.yaml` have no effect until you update the persisted
+  entry or clear the volume. See
+  [Make storage durable with file_based](./deployment#make-storage-durable-with-file_based).
+</Note>
+
 ## Launch the engine app
 
 Create the app and a `fly.toml` with `fly launch --no-deploy` (it detects the
@@ -505,21 +513,21 @@ is no Prometheus scrape endpoint on `9464`; Fly's
 ## What cannot run on Fly
 
 Fly Machines are Firecracker micro-VMs, and Firecracker has no nested virtualization:
-`/dev/kvm` is **not** present inside a Machine (`ls /dev/kvm` -> no such file). So any
-iii worker that the engine boots as its **own** libkrun guest cannot run there:
+`/dev/kvm` is **not** present inside a Machine (`ls /dev/kvm` -> no such file). Any
+iii worker that the engine boots as its **own** libkrun guest cannot run guest
+workloads there:
 
-- `iii-sandbox` and any OCI/image (engine-managed) worker. They boot guests via libkrun.
+- `iii-sandbox` and any OCI/image (engine-managed) worker. The worker may register
+  on boot, but `sandbox::run`, `sandbox::exec`, and similar paths need `/dev/kvm`.
   See [Engine-managed workers (micro-VMs)](./deployment#engine-managed-workers-micro-vms).
 - Bundle workers dispatched through the same libkrun rails.
 
-<Warning>
-  This is not a soft failure. Declaring an engine-managed micro-VM worker (for example
-  `iii worker add iii-sandbox`) makes the engine try to start a guest with no `/dev/kvm`;
-  in testing this took down the engine's worker connection and **rebooted the Machine**.
-  Do not add libkrun workers to a Fly engine's `config.yaml`. To run sandboxed or
-  image-based execution on Fly, run it as its own Fly Machine instead (the
+<Note>
+  Declaring `iii-sandbox` on Fly does not crash the engine Machine on current
+  releases. Guest execution still fails without `/dev/kvm`. Run sandboxed or
+  image-based workloads as separate Fly Machines instead (the
   [Machines API](https://fly.io/docs/machines/) can launch one per job).
-</Warning>
+</Note>
 
 Everything else runs, verified on Fly:
 
@@ -534,19 +542,19 @@ Everything else runs, verified on Fly:
 ## Verify the deployment
 
 Once the engine app is live, the log shows each declared worker registering, including
-any it auto-provisioned. Then call a route your worker registered through the public
-domain:
+any it auto-provisioned. Deploy a worker app that registers an HTTP route, then call
+it through the public domain:
 
 ```bash
 fly logs -a iii-engine
 
-curl https://iii-engine.fly.dev/orders -X POST \
+curl -s -X POST https://iii-engine.fly.dev/hello \
   -H 'content-type: application/json' \
-  -d '{ "sku": "abc", "qty": 1 }'
+  -d '{"name":"world"}'
 ```
 
-A response from your handler confirms the full path: Fly Proxy to `iii-http` to your
-worker app over the 6PN to the `database` worker on the volume.
+A `200` with your handler's JSON confirms Fly Proxy → `iii-http` → your worker app
+over the 6PN.
 
 <Note>
   Redeploying the engine briefly re-registers HTTP routes, which can race a worker that
