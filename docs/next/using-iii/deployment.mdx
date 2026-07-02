@@ -10,8 +10,7 @@ development, see the [Quickstart](../quickstart) and the [Engine](./engine) page
 
 ## iii Cloud deployments
 
-The `iii cloud` subcommand group will manage hosted iii deployments. See [CLI](./cli) for the
-command surface as it stabilizes.
+The `iii cloud` subcommand group will manage hosted iii deployments.
 
 <Note>iii's cloud will be available soon.</Note>
 
@@ -19,12 +18,11 @@ command surface as it stabilizes.
 
 ## Platform guides
 
-Step-by-step deploy guides for common hosts:
+The below guide covers general deployment using docker. We also have step-by-step deploy guides for
+common hosts. These guides build on the Docker patterns below.
 
-- [Deploy to Railway](./deploy-railway): volume-backed engine, private IPv6 networking, Railway edge TLS.
-- [Deploy to Fly.io](./deploy-fly): Fly Machines, 6PN private networking, Fly Proxy TLS.
-
-These build on the Docker patterns below.
+- [Deploy to Railway](./deploy-railway)
+- [Deploy to Fly.io](./deploy-fly)
 
 ## Pre-built images on Docker Hub
 
@@ -62,9 +60,9 @@ application is made of workers, and for deployment what matters is where each wo
   [Creating Workers / Connecting to the engine](../creating-workers/workers#connecting-to-the-engine).
 
 `iii project generate-docker` does not scaffold a sample app. A bare `iii project init` produces a
-minimal `config.yaml` with no functions or endpoints. To start from working code, scaffold a template
-first (`iii project init my-app --template quickstart`), then generate the Docker assets. See the
-[Quickstart](../quickstart) for the sample workers.
+minimal `config.yaml` with no functions or endpoints. To start from working code, scaffold a
+template first (`iii project init my-app --template quickstart`), then generate the Docker assets.
+See the [Quickstart](../quickstart) for the sample workers.
 
 ### Generate the assets
 
@@ -77,7 +75,8 @@ iii project generate-docker
 ```
 
 Both forms emit three files at the project root: `Dockerfile`, `docker-compose.yml`, and `.env`.
-Re-running the generator does not overwrite existing files, so edits you make to the templates stick.
+Re-running the generator does not overwrite existing files, so edits you make to the templates
+stick.
 
 The generated `Dockerfile` builds against `iiidev/iii:latest` and copies your `config.yaml` into the
 image:
@@ -103,16 +102,16 @@ docker compose up -d
 
 The transport ports are:
 
-| Port  | Surface                            |
-| ----- | ---------------------------------- |
-| 49134 | SDK WebSocket (worker connections) |
-| 3111  | REST API                           |
-| 3112  | Stream API                         |
+| Port  | Surface                                              |
+| ----- | ---------------------------------------------------- |
+| 49134 | SDK WebSocket (worker connections)                   |
+| 3111  | REST API                                             |
+| 3112  | Stream API                                           |
 | 49135 | Browser SDK / RBAC listener (when enabled in config) |
 
 The compose file ships commented-out Redis and RabbitMQ services that you uncomment when your
-workers need external adapters. See [Scale out with Redis and
-RabbitMQ](#scale-out-with-redis-and-rabbitmq).
+workers need external adapters. See
+[Scale out with Redis and RabbitMQ](#scale-out-with-redis-and-rabbitmq).
 
 <Note>
   Port `9464` was the Prometheus metrics endpoint in older releases and still appears in the image's
@@ -208,21 +207,21 @@ The engine is stateless. State is held in workers, and each stateful worker sele
 **adapter** in `config.yaml`. The defaults are in-memory, tuned for local development, so choosing
 durable adapters is the main production step.
 
-| Worker              | Stores                       | Adapters                                                      | Default             |
-| ------------------- | ---------------------------- | ------------------------------------------------------------ | ------------------- |
-| `iii-state`         | Key/value state              | `kv` (`in_memory` / `file_based`), `redis`, `bridge`         | `kv` in-memory      |
-| `iii-stream`        | Realtime streams             | `kv` (`in_memory` / `file_based`), `redis`, `bridge`         | `kv` in-memory      |
-| `iii-queue`         | Background jobs / topics      | `builtin` (`in_memory` / `file_based`), `rabbitmq`, `redis` (publish-only) | `builtin` in-memory |
-| `iii-cron`          | Scheduled-task bookkeeping   | `kv` (`in_memory` / `file_based`)                            | `kv` in-memory      |
-| `configuration`     | Runtime config entries       | `fs` (file-based, defaults to `./data/configuration`)        | file-based          |
-| `iii-pubsub`        | Pub/sub fan-out              | `local`, `redis`                                             | `local`             |
-| `iii-http`          | Nothing (request routing)    | n/a                                                          | n/a                 |
-| `iii-observability` | Traces / metrics / logs      | `memory` or `otlp` exporters                                 | `memory`            |
+| Worker              | Stores                     | Adapters                                                                   | Default             |
+| ------------------- | -------------------------- | -------------------------------------------------------------------------- | ------------------- |
+| `iii-state`         | Key/value state            | `kv` (`in_memory` / `file_based`), `redis`, `bridge`                       | `kv` in-memory      |
+| `iii-stream`        | Realtime streams           | `kv` (`in_memory` / `file_based`), `redis`, `bridge`                       | `kv` in-memory      |
+| `iii-queue`         | Background jobs / topics   | `builtin` (`in_memory` / `file_based`), `rabbitmq`, `redis` (publish-only) | `builtin` in-memory |
+| `iii-cron`          | Scheduled-task bookkeeping | `kv` (`in_memory` / `file_based`)                                          | `kv` in-memory      |
+| `configuration`     | Runtime config entries     | `fs` (file-based, defaults to `./data/configuration`)                      | file-based          |
+| `iii-pubsub`        | Pub/sub fan-out            | `local`, `redis`                                                           | `local`             |
+| `iii-http`          | Nothing (request routing)  | n/a                                                                        | n/a                 |
+| `iii-observability` | Traces / metrics / logs    | `memory` or `otlp` exporters                                               | `memory`            |
 
-When a `kv`-backed adapter runs in-memory, the engine logs `DO NOT USE IN_MEMORY STORE_METHOD IN
-PRODUCTION - DATA WILL BE LOST ON SHUTDOWN` on boot. Treat that as a release blocker. The
-`iii-queue` `builtin` adapter is in-memory by default, so jobs are lost on restart until you make it
-file-based or move it to RabbitMQ.
+When a `kv`-backed adapter runs in-memory, the engine logs
+`DO NOT USE IN_MEMORY STORE_METHOD IN PRODUCTION - DATA WILL BE LOST ON SHUTDOWN` on boot. Treat
+that as a release blocker. The `iii-queue` `builtin` adapter is in-memory by default, so jobs are
+lost on restart until you make it file-based or move it to RabbitMQ.
 
 For each worker's full config fields, see the
 [Worker manifest reference](../creating-workers/worker-manifest) and the
@@ -273,25 +272,26 @@ between flushes can drop the most recent writes; use Redis when you need stronge
 
 <Note>
   The storage adapter is restart-tier and persisted. After first boot, `iii-state` writes its live
-  settings to `./data/configuration/iii-state.yaml` (the default `fs` configuration adapter), and the
-  `config.yaml` adapter block becomes seed-only. Editing the adapter in `config.yaml` after that has
-  no effect. The persisted entry wins on the next boot. To change an adapter later, edit the
+  settings to `./data/configuration/iii-state.yaml` (the default `fs` configuration adapter), and
+  the `config.yaml` adapter block becomes seed-only. Editing the adapter in `config.yaml` after that
+  has no effect. The persisted entry wins on the next boot. To change an adapter later, edit the
   persisted file or call `configuration::set`. On a fresh deploy with an empty `./data`, the
   `config.yaml` block is the seed.
 </Note>
 
 ### Scale out with Redis and RabbitMQ
 
-File-based storage is single-instance. To run more than one engine replica, or for real-time
-fan-out across processes, move stateful workers to an external backend. This step is optional. A
-single replica on file-based storage is a valid production setup.
+File-based storage is single-instance. To run more than one engine replica, or for real-time fan-out
+across processes, move stateful workers to an external backend. This step is optional. A single
+replica on file-based storage is a valid production setup.
 
 Match the backend to the workload:
 
-- `iii-state`, `iii-stream`, `iii-pubsub` → Redis, for shared key/value, stream fan-out, and pub/sub.
+- `iii-state`, `iii-stream`, `iii-pubsub` → Redis, for shared key/value, stream fan-out, and
+  pub/sub.
 - `iii-queue` → RabbitMQ, for durable cross-instance delivery with retries and DLQs. The queue
-  `redis` adapter is publish-only for named queues (no named-queue consumption, retries, or DLQs), so
-  it does not replace `rabbitmq` or the single-instance `builtin` adapter.
+  `redis` adapter is publish-only for named queues (no named-queue consumption, retries, or DLQs),
+  so it does not replace `rabbitmq` or the single-instance `builtin` adapter.
 
 ```yaml
 workers:
@@ -331,7 +331,7 @@ Uncomment the `redis` and `rabbitmq` services in the generated `docker-compose.y
 services:
   iii:
     # ...
-    env_file: .env        # forwards RABBITMQ_USER / RABBITMQ_PASS into the engine
+    env_file: .env # forwards RABBITMQ_USER / RABBITMQ_PASS into the engine
     depends_on:
       redis:
         condition: service_healthy
@@ -390,13 +390,13 @@ defaults favor fast iteration; production wants the opposite. Adjust the manifes
   real signal: `node dist/index.js`, not `npx tsx watch src/index.ts`.
 - `scripts.install`: install from a lockfile without dev dependencies: `npm ci --omit=dev`.
 - `env`: inject production configuration. Keep secrets out of the file and supply them from the
-  environment. For **engine-managed** workers, the manifest keys `III_URL` and
-  `III_ENGINE_URL` are ignored; the engine sets the connection URL. For workers you run
-  yourself (Compose services, Fly apps, Railway services), set `III_URL` in the container
-  environment and pass it to `registerWorker(process.env.III_URL)`.
+  environment. For **engine-managed** workers, the manifest keys `III_URL` and `III_ENGINE_URL` are
+  ignored; the engine sets the connection URL. For workers you run yourself (Compose services, Fly
+  apps, Railway services), set `III_URL` in the container environment and pass it to
+  `registerWorker(process.env.III_URL)`.
 - `runtime.base_image`: pin a specific base image so builds are reproducible.
-- `resources`: set explicit `cpus` and `memory` for the worker's sandbox (defaults are 2 vCPU /
-  2048 MiB, capped at 4 / 4096).
+- `resources`: set explicit `cpus` and `memory` for the worker's sandbox (defaults are 2 vCPU / 2048
+  MiB, capped at 4 / 4096).
 
 See the [Worker manifest reference](../creating-workers/worker-manifest) for every field.
 
@@ -410,17 +410,17 @@ the installable workers: `database` (PostgreSQL/MySQL/SQLite), `storage` (S3/GCS
 Workers reach the engine in one of two ways, and which one you use decides how it deploys:
 
 - **Connect over WebSocket**: your own workers (and any worker you choose to run yourself) run as
-  their own container and point `III_URL` at the engine service. This is the portable, Compose-native
-  pattern.
+  their own container and point `III_URL` at the engine service. This is the portable,
+  Compose-native pattern.
 - **Engine-managed** (added with `iii worker add`): the engine starts them from `config.yaml`.
   Workers with `deploy: binary` run as plain child processes; workers with `deploy: bundle` or
   `deploy: image` boot libkrun guests and need `/dev/kvm`.
 
 ### Engine, adapters, and your own workers
 
-The engine runs the in-process workers from its `config.yaml` (`iii-http`, `iii-state`,
-`iii-queue`, ...); each of your own workers runs as its own service and connects with
-`III_URL=ws://iii:49134` (the engine's service name on the Compose network).
+The engine runs the in-process workers from its `config.yaml` (`iii-http`, `iii-state`, `iii-queue`,
+...); each of your own workers runs as its own service and connects with `III_URL=ws://iii:49134`
+(the engine's service name on the Compose network).
 
 ```yaml
 services:
@@ -430,15 +430,15 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - iii_data:/data
     ports:
-      - "3111:3111"      # REST (front this with a reverse proxy in production)
-    env_file: .env       # forwards RABBITMQ_USER / RABBITMQ_PASS into the engine
+      - "3111:3111" # REST (front this with a reverse proxy in production)
+    env_file: .env # forwards RABBITMQ_USER / RABBITMQ_PASS into the engine
     environment:
       - III_EXECUTION_CONTEXT=docker
     restart: unless-stopped
 
   # Your worker (your image, your code) connects to the engine over the network.
   app-worker:
-    build: ./worker            # a Node/Python/Rust image that runs your worker
+    build: ./worker # a Node/Python/Rust image that runs your worker
     environment:
       - III_URL=ws://iii:49134
     depends_on:
@@ -493,10 +493,10 @@ Workers added with `iii worker add` are started by the engine from `config.yaml`
 depends on the worker's top-level `deploy:` field in its `iii.worker.yaml` on
 [workers.iii.dev](https://workers.iii.dev):
 
-| `deploy:` | Runtime | Needs `/dev/kvm`? | Typical workers |
-| --- | --- | --- | --- |
-| `binary` | plain child process via `iii-worker` | no | `database`, `shell`, `storage` (binary build) |
-| `bundle` / `image` | libkrun micro-VM guest | yes | `iii-sandbox`, OCI workers, older `bundle` builds |
+| `deploy:`          | Runtime                              | Needs `/dev/kvm`? | Typical workers                                   |
+| ------------------ | ------------------------------------ | ----------------- | ------------------------------------------------- |
+| `binary`           | plain child process via `iii-worker` | no                | `database`, `shell`, `storage` (binary build)     |
+| `bundle` / `image` | libkrun micro-VM guest               | yes               | `iii-sandbox`, OCI workers, older `bundle` builds |
 
 Declare them in `config.yaml` alongside the in-process workers:
 
@@ -533,9 +533,9 @@ distroless image:
 ```yaml
 services:
   iii:
-    image: your-engine-image   # glibc base with iii + iii-worker + baked binary workers
+    image: your-engine-image # glibc base with iii + iii-worker + baked binary workers
     devices:
-      - /dev/kvm               # required only for deploy: bundle / deploy: image workers
+      - /dev/kvm # required only for deploy: bundle / deploy: image workers
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - iii_data:/data
@@ -549,9 +549,9 @@ services:
 </Note>
 
 <Note>
-  Each registry worker has its own config schema (database connection, storage backend, credentials).
-  Look it up on the worker's page at [workers.iii.dev](https://workers.iii.dev), and supply secrets
-  from the environment.
+  Each registry worker has its own config schema (database connection, storage backend,
+  credentials). Look it up on the worker's page at [workers.iii.dev](https://workers.iii.dev), and
+  supply secrets from the environment.
 </Note>
 
 ## Hardening
@@ -566,7 +566,7 @@ reverse proxy reach the engine. Do not expose `49134`, `3111`, or `3112` directl
 workers:
   - name: iii-http
     config:
-      host: 0.0.0.0          # container; use 127.0.0.1 on a bare host
+      host: 0.0.0.0 # container; use 127.0.0.1 on a bare host
       port: 3111
       default_timeout: 30000
       concurrency_request_limit: 1024
@@ -608,12 +608,12 @@ workers:
   - name: iii-worker-manager
     config:
       host: 0.0.0.0
-      port: 49134            # main, trusted listener
+      port: 49134 # main, trusted listener
 
   - name: iii-worker-manager
     config:
       host: 0.0.0.0
-      port: 49135            # public RBAC listener
+      port: 49135 # public RBAC listener
       rbac:
         auth_function_id: my-project::auth-function
         expose_functions:
@@ -712,8 +712,8 @@ server {
 }
 ```
 
-The equivalent in Caddy, which handles WebSocket upgrades automatically and strips the matched prefix
-with `handle_path`:
+The equivalent in Caddy, which handles WebSocket upgrades automatically and strips the matched
+prefix with `handle_path`:
 
 ```
 example.com {
@@ -775,7 +775,7 @@ workers:
       enabled: true
       service_name: iii
       exporter: otlp
-      endpoint: http://otel-collector:4318   # collector HTTP port
+      endpoint: http://otel-collector:4318 # collector HTTP port
       metrics_enabled: true
       metrics_exporter: otlp
       logs_enabled: true
@@ -788,8 +788,8 @@ environment:
   - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 ```
 
-Without that env var, use `endpoint: http://otel-collector:4317` (gRPC) and accept that logs need the
-HTTP path. Metrics export on a 60-second interval. TLS is enabled automatically for `https://`
+Without that env var, use `endpoint: http://otel-collector:4317` (gRPC) and accept that logs need
+the HTTP path. Metrics export on a 60-second interval. TLS is enabled automatically for `https://`
 endpoints.
 
 <Note>
@@ -814,17 +814,18 @@ endpoints.
 - [ ] Every `file_path` resolves to a mounted volume writable by UID `65532`.
 - [ ] Adapter changes account for the persisted configuration entry (a fresh deploy seeds from
       `config.yaml`; an existing one reads `./data/configuration`).
-- [ ] For multiple replicas, all stateful workers use an external backend referenced by service name,
-      with credentials from the environment.
+- [ ] For multiple replicas, all stateful workers use an external backend referenced by service
+      name, with credentials from the environment.
 
 **Workers**
 
-- [ ] Worker manifests use production `start` / `install` scripts (no watch mode, lockfile installs).
+- [ ] Worker manifests use production `start` / `install` scripts (no watch mode, lockfile
+      installs).
 - [ ] Worker `env` and `resources` set; secrets injected from the environment.
 - [ ] Your own workers run as their own services pointing `III_URL` at the engine.
 - [ ] Engine-managed registry workers use a glibc-based engine image with `iii-worker` and
-      `libcap-ng0` (not the distroless stock image). `/dev/kvm` only when using `deploy: bundle`
-      or `deploy: image` workers.
+      `libcap-ng0` (not the distroless stock image). `/dev/kvm` only when using `deploy: bundle` or
+      `deploy: image` workers.
 
 **Networking and security**
 
@@ -837,7 +838,8 @@ endpoints.
 **Operations**
 
 - [ ] External health checks configured (TCP `3111` or `tcpSocket`), not in-container shell probes.
-- [ ] Observability exporter set to `otlp` with a collector endpoint, or `memory` accepted for scope.
+- [ ] Observability exporter set to `otlp` with a collector endpoint, or `memory` accepted for
+      scope.
 - [ ] Restart policy set (`restart: unless-stopped` or the orchestrator equivalent).
 
 {/* TODO: enumerate the `iii cloud` surface once stable (deploy, logs, ssh, env, etc.) and link out to the iii Cloud product docs in the section at the top of this page. */}
