@@ -57,6 +57,7 @@ struct FunctionHandler {
     engine: Arc<Engine>,
     function_id: String,
     condition_function_id: Option<String>,
+    dispatch_timeout: Option<std::time::Duration>,
 }
 
 #[async_trait]
@@ -86,6 +87,7 @@ impl JobHandler for FunctionHandler {
         let engine = Arc::clone(&self.engine);
         let function_id = self.function_id.clone();
         let condition_function_id = self.condition_function_id.clone();
+        let dispatch_timeout = self.dispatch_timeout;
         let data = job.data.clone();
 
         async move {
@@ -116,7 +118,9 @@ impl JobHandler for FunctionHandler {
                 }
             }
 
-            let result = engine.call(&function_id, data).await;
+            let result = engine
+                .call_with_timeout(&function_id, data, dispatch_timeout, None)
+                .await;
             match &result {
                 Ok(_) => {
                     tracing::Span::current().record("otel.status_code", "OK");
@@ -228,10 +232,13 @@ impl QueueAdapter for BuiltinQueueAdapter {
     ) {
         let internal_queue = format!("{}::{}", topic, function_id);
 
+        let dispatch_timeout = queue_config.as_ref().and_then(|c| c.dispatch_timeout());
+
         let handler: Arc<dyn JobHandler> = Arc::new(FunctionHandler {
             engine: Arc::clone(&self.engine),
             function_id: function_id.to_string(),
             condition_function_id,
+            dispatch_timeout,
         });
 
         let subscription_config = queue_config.map(|c| SubscriptionConfig {
@@ -700,7 +707,7 @@ mod tests {
             queue_mode: Some("fifo".to_string()),
             max_retries: Some(3),
             concurrency: Some(5),
-            visibility_timeout: None,
+            dispatch_timeout_ms: None,
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: Some(1000),
@@ -730,7 +737,7 @@ mod tests {
             queue_mode: Some("concurrent".to_string()),
             max_retries: None,
             concurrency: None,
-            visibility_timeout: None,
+            dispatch_timeout_ms: None,
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: None,
@@ -758,7 +765,7 @@ mod tests {
             queue_mode: Some("standard".to_string()),
             max_retries: None,
             concurrency: None,
-            visibility_timeout: None,
+            dispatch_timeout_ms: None,
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: None,
@@ -785,7 +792,7 @@ mod tests {
             queue_mode: None,
             max_retries: Some(5),
             concurrency: Some(10),
-            visibility_timeout: None,
+            dispatch_timeout_ms: None,
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: None,
@@ -832,6 +839,7 @@ mod tests {
             engine: Arc::clone(&engine),
             function_id: "queue.success".to_string(),
             condition_function_id: None,
+            dispatch_timeout: None,
         };
         success
             .handle(&job)
@@ -842,6 +850,7 @@ mod tests {
             engine,
             function_id: "queue.failure".to_string(),
             condition_function_id: None,
+            dispatch_timeout: None,
         };
         let err = failure
             .handle(&job)
@@ -863,7 +872,7 @@ mod tests {
             queue_mode: Some("fifo".to_string()),
             max_retries: Some(3),
             concurrency: Some(2),
-            visibility_timeout: None,
+            dispatch_timeout_ms: None,
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: Some(25),
@@ -877,7 +886,7 @@ mod tests {
             queue_mode: Some("standard".to_string()),
             max_retries: Some(2),
             concurrency: Some(1),
-            visibility_timeout: None,
+            dispatch_timeout_ms: None,
             delay_seconds: None,
             backoff_type: None,
             backoff_delay_ms: Some(10),
