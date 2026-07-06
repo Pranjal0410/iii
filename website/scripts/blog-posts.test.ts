@@ -86,9 +86,9 @@ description: 'd'
   assert.deepEqual(posts, [])
 })
 
-test('readBlogPosts reads the real blog content directory and finds hello-world', async () => {
+test('readBlogPosts reads the real blog content directory and finds add-a-worker', async () => {
   const posts = await readBlogPosts()
-  const hello = posts.find((p) => p.slug === 'hello-world')
-  assert.ok(hello, 'expected the seeded hello-world post to be found')
-  assert.equal(hello?.draft, false)
+  const post = posts.find((p) => p.slug === 'add-a-worker')
+  assert.ok(post, 'expected the add-a-worker post to be found')
+  assert.equal(post?.draft, false)
 })

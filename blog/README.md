@@ -42,9 +42,10 @@ On every push to `main` that touches `blog/**`, `website/**`, or
 `infra/terraform/website/**`, CI:
 
 1. Builds with `pnpm --filter iii-blog build` → `blog/dist/`.
-2. Syncs `blog/dist/` to `s3://<site-bucket>/blog/`. Hashed assets get a
-   long `immutable` cache; `*.html` and `*.xml` get `must-revalidate`.
-3. Invalidates the CloudFront distribution at `/*`.
+2. Exports agent-readable markdown with `pnpm --filter iii-website exec tsx scripts/generate-blog-md.ts` → `blog/dist/<slug>.md` and `blog/dist/index.md` (indexed in `llms.txt` and `AGENTS.md`).
+3. Syncs `blog/dist/` to `s3://<site-bucket>/blog/`. Hashed assets get a
+   long `immutable` cache; `*.html`, `*.xml`, and `*.md` get `must-revalidate`.
+4. Invalidates the CloudFront distribution at `/*`.
 
 Routing under `/blog/*` is handled in
 [`infra/terraform/website/cloudfront_functions/redirects.js`](../infra/terraform/website/cloudfront_functions/redirects.js)
@@ -53,7 +54,7 @@ Routing under `/blog/*` is handled in
 - `/blog` → 301 `/blog/`
 - `/blog/<slug>/` → S3 key `blog/<slug>/index.html`
 - `/blog/<slug>` → 301 `/blog/<slug>/`
-- `/blog/<file.ext>` → pass through
+- `/blog/<file.ext>` → pass through (includes `<slug>.md` for coding agents)
 
 ## Adding a post
 

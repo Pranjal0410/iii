@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 export interface BlogPost {
   slug: string
   title: string
+  description: string
   pubDate: Date
   updatedDate?: Date
   draft: boolean
@@ -65,6 +66,7 @@ export async function readBlogPosts(dir = BLOG_CONTENT_DIR): Promise<BlogPost[]>
     posts.push({
       slug: entry.replace(/\.(md|mdx)$/, ''),
       title: fm.title ?? entry,
+      description: fm.description ?? '',
       pubDate,
       updatedDate: parseDate(fm.updatedDate),
       draft: fm.draft === 'true',

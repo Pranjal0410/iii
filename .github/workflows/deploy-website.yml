@@ -54,6 +54,9 @@ jobs:
       - name: Build blog (Astro → blog/dist/)
         run: pnpm --filter iii-blog build
 
+      - name: Export blog markdown for coding agents
+        run: pnpm --filter iii-website exec tsx scripts/generate-blog-md.ts
+
       - name: Configure AWS credentials (GitHub OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -130,16 +133,18 @@ jobs:
             --delete \
             --cache-control "public,max-age=31536000,immutable" \
             --exclude "*.html" \
-            --exclude "*.xml"
+            --exclude "*.xml" \
+            --exclude "*.md"
 
-      - name: Sync blog HTML and RSS (no cache, must revalidate)
+      - name: Sync blog HTML, RSS, and markdown (no cache, must revalidate)
         run: |
           aws s3 sync blog/dist/ "s3://${{ vars.S3_BUCKET }}/blog/" \
             --delete \
             --cache-control "public,max-age=0,must-revalidate" \
             --exclude "*" \
             --include "*.html" \
-            --include "*.xml"
+            --include "*.xml" \
+            --include "*.md"
 
       - name: Create CloudFront invalidation
         id: invalidation
