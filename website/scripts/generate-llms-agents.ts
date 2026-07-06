@@ -19,6 +19,13 @@ function isoDate(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+/** Non-empty optional section plus trailing blank line; empty input adds nothing. */
+function optionalSection(section: string): string[] {
+  const trimmed = section.trimEnd()
+  if (!trimmed) return []
+  return [trimmed, '']
+}
+
 /** Drop the leading H1 so `llms.txt` keeps a single project `# iii` title per llms.txt guidance. */
 export function overviewBodyWithoutLeadingH1(): string {
   return AI_OVERVIEW.replace(/^#\s+[^\n]*\n+/, '').trimStart()
@@ -150,11 +157,10 @@ Last updated: ${isoDate()}
     '',
     home.trimEnd(),
     '',
-    blogSection.trimEnd(),
-    blogSection ? '' : undefined,
+    ...optionalSection(blogSection),
     tail.trimEnd(),
     '',
-  ].filter((chunk): chunk is string => chunk !== undefined).join('\n')
+  ].join('\n')
 
   return `${body.trimEnd()}\n`
 }
@@ -176,13 +182,12 @@ export function buildAgentsMd(html: string, agentsAppendix: string, blogSection 
     '',
     home.trimEnd(),
     '',
-    blogSection.trimEnd(),
-    blogSection ? '' : undefined,
+    ...optionalSection(blogSection),
     agentsAppendix.trimEnd(),
     '',
     `Last updated: ${isoDate()}`,
     '',
-  ].filter((chunk): chunk is string => chunk !== undefined).join('\n')
+  ].join('\n')
 
   return intro
 }

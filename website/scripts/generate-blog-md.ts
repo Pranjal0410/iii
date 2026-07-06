@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { readBlogPosts } from './blog-posts'
+import { type BlogPost, readBlogPosts } from './blog-posts'
 import { SITE_ORIGIN } from './routes'
 
 const WEBSITE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -9,6 +9,17 @@ const BLOG_DIST = path.resolve(WEBSITE_ROOT, '../blog/dist')
 const BLOG_CONTENT = path.resolve(WEBSITE_ROOT, '../blog/src/content/blog')
 
 const IMAGE_RE = /!\[([^\]]*)\]\(\.\.\/\.\.\/assets\/blog\/[^/]+\/([^)]+)\)/g
+
+function escapeMarkdownLinkText(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]')
+}
+
+export function formatBlogPostLinkLine(post: BlogPost): string {
+  const title = escapeMarkdownLinkText(post.title)
+  const url = `${SITE_ORIGIN}/blog/${post.slug}.md`
+  const description = post.description.replace(/\s+/g, ' ').trim()
+  return `- [${title}](${url}) — ${description}`
+}
 
 async function listAstroAssets(distDir: string): Promise<string[]> {
   try {
@@ -40,17 +51,14 @@ export async function exportBlogMarkdown(
   let count = 0
 
   for (const post of posts) {
-    const sourcePath = path.join(contentDir, `${post.slug}.md`)
+    const sourcePath = path.join(contentDir, post.sourceFile)
     const raw = await fs.readFile(sourcePath, 'utf8')
     const exported = rewriteBlogImagePaths(raw, astroAssets)
     await fs.writeFile(path.join(distDir, `${post.slug}.md`), exported, 'utf8')
     count++
   }
 
-  const indexLines = posts.map(
-    (post) =>
-      `- [${post.title}](${SITE_ORIGIN}/blog/${post.slug}.md) — ${post.description}`,
-  )
+  const indexLines = posts.map(formatBlogPostLinkLine)
   await fs.writeFile(
     path.join(distDir, 'index.md'),
     [
@@ -74,18 +82,13 @@ export async function buildBlogLinksSection(): Promise<string> {
   const posts = (await readBlogPosts()).filter((post) => !post.draft)
   if (posts.length === 0) return ''
 
-  const lines = posts.map(
-    (post) =>
-      `- [${post.title}](${SITE_ORIGIN}/blog/${post.slug}.md) — ${post.description}`,
-  )
-
   return [
     '## Blog (knowledge base for coding agents)',
     '',
     'Long-form architecture posts, harness patterns, and worked examples. Fetch as markdown:',
     '',
     `- [Blog index](${SITE_ORIGIN}/blog/index.md) — all posts`,
-    ...lines,
+    ...posts.map(formatBlogPostLinkLine),
     '',
   ].join('\n')
 }
