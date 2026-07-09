@@ -69,6 +69,24 @@ pub trait QueueEnqueuer: Send + Sync {
     }
 }
 
+/// Function implemented by the standalone queue worker for function-queue
+/// dispatch.  The engine uses the normal worker-function RPC path for this
+/// fallback, so an external queue worker needs no bespoke protocol message or
+/// engine-side trait implementation.
+const EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID: &str = "engine::queue::enqueue";
+
+/// Payload sent to the standalone queue provider when the built-in queue
+/// module is not loaded.  Keep the target invocation payload under `data` so
+/// `TriggerAction::Enqueue` retains its existing public request shape.
+#[derive(Serialize)]
+struct ExternalQueueEnqueueInput {
+    queue: String,
+    function_id: String,
+    data: Value,
+    #[serde(rename = "messageReceiptId")]
+    message_receipt_id: String,
+}
+
 /// Magic prefix for OTLP binary frames (used by SDKs for trace spans)
 const OTLP_WS_PREFIX: &[u8] = b"OTLP";
 /// Magic prefix for metrics binary frames (used by SDKs for OTEL metrics)
@@ -1053,8 +1071,14 @@ impl Engine {
 
                         tokio::spawn(
                             async move {
-                                let queue_module = engine.queue_module.read().await;
-                                let result = match queue_module.as_ref() {
+                                // Prefer the in-process module when present for
+                                // backwards compatibility.  Without it, route
+                                // through the standalone queue worker's normal
+                                // registered function. `Engine::call` carries
+                                // the current enqueue span's trace/baggage over
+                                // the existing worker RPC boundary.
+                                let queue_module = engine.queue_module.read().await.clone();
+                                let result = match queue_module {
                                     Some(qm) => {
                                         qm.enqueue_to_function_queue(
                                             &queue,
@@ -1066,7 +1090,25 @@ impl Engine {
                                         )
                                         .await
                                     }
-                                    None => Err(anyhow::anyhow!("QueueModule not loaded")),
+                                    None => engine
+                                        .call(
+                                            EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID,
+                                            ExternalQueueEnqueueInput {
+                                                queue: queue.clone(),
+                                                function_id: function_id.clone(),
+                                                data: data.clone(),
+                                                message_receipt_id: message_receipt_id.clone(),
+                                            },
+                                        )
+                                        .await
+                                        .map(|_| ())
+                                        .map_err(|error| {
+                                            anyhow::anyhow!(
+                                                "external queue provider '{}': {}",
+                                                EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID,
+                                                error
+                                            )
+                                        }),
                                 };
 
                                 if let Some(invocation_id) = invocation_id {
@@ -2007,8 +2049,9 @@ mod tests {
     };
 
     use serde::Serialize;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use tokio::sync::mpsc;
+    use uuid::Uuid;
 
     use crate::{
         config::SecurityConfig,
@@ -2043,6 +2086,70 @@ mod tests {
             S: serde::Serializer,
         {
             Err(serde::ser::Error::custom("serialization exploded"))
+        }
+    }
+
+    fn enqueue_invocation(
+        invocation_id: Uuid,
+        queue: &str,
+        function_id: &str,
+        data: Value,
+    ) -> Message {
+        Message::InvokeFunction {
+            invocation_id: Some(invocation_id),
+            function_id: function_id.to_string(),
+            data,
+            traceparent: Some(
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
+            ),
+            baggage: Some("tenant=acme".to_string()),
+            action: Some(crate::protocol::TriggerAction::Enqueue {
+                queue: queue.to_string(),
+            }),
+            metadata: None,
+        }
+    }
+
+    async fn register_external_queue_provider(engine: &Engine, provider: &WorkerConnection) {
+        engine
+            .router_msg(
+                provider,
+                &Message::RegisterFunction {
+                    id: super::EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID.to_string(),
+                    description: Some("standalone queue provider".to_string()),
+                    request_format: None,
+                    response_format: None,
+                    metadata: None,
+                    invocation: None,
+                },
+            )
+            .await
+            .expect("register standalone queue provider");
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingQueueEnqueuer {
+        calls: Arc<tokio::sync::Mutex<Vec<(String, String, Value, String)>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl super::QueueEnqueuer for RecordingQueueEnqueuer {
+        async fn enqueue_to_function_queue(
+            &self,
+            queue_name: &str,
+            function_id: &str,
+            data: Value,
+            message_id: String,
+            _traceparent: Option<String>,
+            _baggage: Option<String>,
+        ) -> anyhow::Result<()> {
+            self.calls.lock().await.push((
+                queue_name.to_string(),
+                function_id.to_string(),
+                data,
+                message_id,
+            ));
+            Ok(())
         }
     }
 
@@ -2766,6 +2873,277 @@ mod tests {
             }
             other => panic!("expected InvocationResult, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn enqueue_without_builtin_delegates_to_external_queue_provider() {
+        ensure_default_meter();
+        let engine = Engine::new();
+        let (source_tx, mut source_rx) = mpsc::channel::<Outbound>(8);
+        let source = WorkerConnection::new(source_tx);
+        let (provider_tx, mut provider_rx) = mpsc::channel::<Outbound>(8);
+        let provider = WorkerConnection::new(provider_tx);
+        register_external_queue_provider(&engine, &provider).await;
+
+        let invocation_id = Uuid::new_v4();
+        let payload = json!({ "turn_id": "turn-1", "step": 3 });
+        engine
+            .router_msg(
+                &source,
+                &enqueue_invocation(
+                    invocation_id,
+                    "harness-turn",
+                    "harness::turn",
+                    payload.clone(),
+                ),
+            )
+            .await
+            .expect("enqueue invocation should route");
+
+        let provider_message = tokio::time::timeout(Duration::from_secs(1), provider_rx.recv())
+            .await
+            .expect("timed out waiting for queue provider invocation")
+            .expect("queue provider channel should produce invocation");
+        let (provider_invocation_id, provider_payload) = match provider_message {
+            Outbound::Protocol(Message::InvokeFunction {
+                invocation_id: Some(provider_invocation_id),
+                function_id,
+                data,
+                action,
+                ..
+            }) => {
+                assert_eq!(function_id, super::EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID);
+                assert!(
+                    action.is_none(),
+                    "provider RPC must not recursively enqueue"
+                );
+                (provider_invocation_id, data)
+            }
+            other => panic!("expected queue provider InvokeFunction, got {other:?}"),
+        };
+
+        assert_eq!(provider_payload["queue"], "harness-turn");
+        assert_eq!(provider_payload["function_id"], "harness::turn");
+        assert_eq!(provider_payload["data"], payload);
+        let receipt = provider_payload["messageReceiptId"]
+            .as_str()
+            .expect("provider payload must carry a receipt")
+            .to_string();
+
+        engine
+            .router_msg(
+                &provider,
+                &Message::InvocationResult {
+                    invocation_id: provider_invocation_id,
+                    function_id: super::EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID.to_string(),
+                    result: Some(json!({ "messageReceiptId": receipt })),
+                    error: None,
+                    traceparent: None,
+                    baggage: None,
+                },
+            )
+            .await
+            .expect("provider acknowledgement should route");
+
+        let source_message = tokio::time::timeout(Duration::from_secs(1), source_rx.recv())
+            .await
+            .expect("timed out waiting for enqueue acknowledgement")
+            .expect("source channel should produce acknowledgement");
+        match source_message {
+            Outbound::Protocol(Message::InvocationResult {
+                invocation_id: returned_invocation_id,
+                function_id,
+                result,
+                error,
+                traceparent,
+                baggage,
+            }) => {
+                assert_eq!(returned_invocation_id, invocation_id);
+                assert_eq!(function_id, "harness::turn");
+                assert_eq!(result, Some(json!({ "messageReceiptId": receipt })));
+                assert!(error.is_none());
+                assert_eq!(
+                    traceparent.as_deref(),
+                    Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+                );
+                assert_eq!(baggage.as_deref(), Some("tenant=acme"));
+            }
+            other => panic!("expected enqueue InvocationResult, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn enqueue_external_provider_failure_returns_enqueue_error() {
+        ensure_default_meter();
+        let engine = Engine::new();
+        let (source_tx, mut source_rx) = mpsc::channel::<Outbound>(8);
+        let source = WorkerConnection::new(source_tx);
+        let (provider_tx, mut provider_rx) = mpsc::channel::<Outbound>(8);
+        let provider = WorkerConnection::new(provider_tx);
+        register_external_queue_provider(&engine, &provider).await;
+
+        let invocation_id = Uuid::new_v4();
+        engine
+            .router_msg(
+                &source,
+                &enqueue_invocation(
+                    invocation_id,
+                    "harness-turn",
+                    "harness::turn",
+                    json!({ "turn_id": "turn-1" }),
+                ),
+            )
+            .await
+            .expect("enqueue invocation should route");
+
+        let provider_message = tokio::time::timeout(Duration::from_secs(1), provider_rx.recv())
+            .await
+            .expect("timed out waiting for queue provider invocation")
+            .expect("queue provider channel should produce invocation");
+        let provider_invocation_id = match provider_message {
+            Outbound::Protocol(Message::InvokeFunction {
+                invocation_id: Some(provider_invocation_id),
+                ..
+            }) => provider_invocation_id,
+            other => panic!("expected queue provider InvokeFunction, got {other:?}"),
+        };
+
+        engine
+            .router_msg(
+                &provider,
+                &Message::InvocationResult {
+                    invocation_id: provider_invocation_id,
+                    function_id: super::EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID.to_string(),
+                    result: None,
+                    error: Some(crate::protocol::ErrorBody::new(
+                        "queue_persist_failed",
+                        "durable store is unavailable",
+                    )),
+                    traceparent: None,
+                    baggage: None,
+                },
+            )
+            .await
+            .expect("provider failure should route");
+
+        let source_message = tokio::time::timeout(Duration::from_secs(1), source_rx.recv())
+            .await
+            .expect("timed out waiting for enqueue failure")
+            .expect("source channel should produce failure");
+        match source_message {
+            Outbound::Protocol(Message::InvocationResult {
+                invocation_id: returned_invocation_id,
+                result,
+                error,
+                ..
+            }) => {
+                assert_eq!(returned_invocation_id, invocation_id);
+                assert!(result.is_none());
+                let error = error.expect("enqueue failure should return an error");
+                assert_eq!(error.code, "enqueue_error");
+                assert!(error.message.contains("queue_persist_failed"));
+                assert!(error.message.contains("durable store is unavailable"));
+            }
+            other => panic!("expected enqueue InvocationResult, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn enqueue_without_any_queue_provider_fails_synchronously() {
+        ensure_default_meter();
+        let engine = Engine::new();
+        let (source_tx, mut source_rx) = mpsc::channel::<Outbound>(8);
+        let source = WorkerConnection::new(source_tx);
+        let invocation_id = Uuid::new_v4();
+
+        engine
+            .router_msg(
+                &source,
+                &enqueue_invocation(
+                    invocation_id,
+                    "harness-turn",
+                    "harness::turn",
+                    json!({ "turn_id": "turn-1" }),
+                ),
+            )
+            .await
+            .expect("enqueue invocation should route");
+
+        let source_message = tokio::time::timeout(Duration::from_secs(1), source_rx.recv())
+            .await
+            .expect("timed out waiting for enqueue failure")
+            .expect("source channel should produce failure");
+        match source_message {
+            Outbound::Protocol(Message::InvocationResult {
+                invocation_id: returned_invocation_id,
+                result,
+                error,
+                ..
+            }) => {
+                assert_eq!(returned_invocation_id, invocation_id);
+                assert!(result.is_none());
+                let error = error.expect("missing provider should return an error");
+                assert_eq!(error.code, "enqueue_error");
+                assert!(
+                    error
+                        .message
+                        .contains(super::EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID)
+                );
+            }
+            other => panic!("expected enqueue InvocationResult, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn enqueue_prefers_loaded_builtin_queue_module() {
+        ensure_default_meter();
+        let engine = Engine::new();
+        let builtin = Arc::new(RecordingQueueEnqueuer::default());
+        engine.set_queue_module(builtin.clone()).await;
+        let (source_tx, mut source_rx) = mpsc::channel::<Outbound>(8);
+        let source = WorkerConnection::new(source_tx);
+        let invocation_id = Uuid::new_v4();
+        let payload = json!({ "turn_id": "turn-1" });
+
+        engine
+            .router_msg(
+                &source,
+                &enqueue_invocation(
+                    invocation_id,
+                    "harness-turn",
+                    "harness::turn",
+                    payload.clone(),
+                ),
+            )
+            .await
+            .expect("enqueue invocation should route");
+
+        let source_message = tokio::time::timeout(Duration::from_secs(1), source_rx.recv())
+            .await
+            .expect("timed out waiting for enqueue acknowledgement")
+            .expect("source channel should produce acknowledgement");
+        let receipt = match source_message {
+            Outbound::Protocol(Message::InvocationResult {
+                invocation_id: returned_invocation_id,
+                result: Some(result),
+                error: None,
+                ..
+            }) => {
+                assert_eq!(returned_invocation_id, invocation_id);
+                result["messageReceiptId"]
+                    .as_str()
+                    .expect("enqueue acknowledgement should contain receipt")
+                    .to_string()
+            }
+            other => panic!("expected successful enqueue InvocationResult, got {other:?}"),
+        };
+
+        let calls = builtin.calls.lock().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "harness-turn");
+        assert_eq!(calls[0].1, "harness::turn");
+        assert_eq!(calls[0].2, payload);
+        assert_eq!(calls[0].3, receipt);
     }
 
     // ---------------------------------------------------------------
