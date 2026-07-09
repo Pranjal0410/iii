@@ -1071,45 +1071,31 @@ impl Engine {
 
                         tokio::spawn(
                             async move {
-                                // Prefer the in-process module when present for
-                                // backwards compatibility.  Without it, route
-                                // through the standalone queue worker's normal
+                                // Route through the standalone queue worker's
                                 // registered function. `Engine::call` carries
                                 // the current enqueue span's trace/baggage over
-                                // the existing worker RPC boundary.
-                                let queue_module = engine.queue_module.read().await.clone();
-                                let result = match queue_module {
-                                    Some(qm) => {
-                                        qm.enqueue_to_function_queue(
-                                            &queue,
-                                            &function_id,
-                                            data.clone(),
-                                            message_receipt_id.clone(),
-                                            traceparent.clone(),
-                                            baggage.clone(),
-                                        )
-                                        .await
-                                    }
-                                    None => engine
-                                        .call(
+                                // the existing worker RPC boundary and only
+                                // acknowledges after the provider persists the
+                                // job.
+                                let result = engine
+                                    .call(
+                                        EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID,
+                                        ExternalQueueEnqueueInput {
+                                            queue: queue.clone(),
+                                            function_id: function_id.clone(),
+                                            data: data.clone(),
+                                            message_receipt_id: message_receipt_id.clone(),
+                                        },
+                                    )
+                                    .await
+                                    .map(|_| ())
+                                    .map_err(|error| {
+                                        anyhow::anyhow!(
+                                            "external queue provider '{}': {}",
                                             EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID,
-                                            ExternalQueueEnqueueInput {
-                                                queue: queue.clone(),
-                                                function_id: function_id.clone(),
-                                                data: data.clone(),
-                                                message_receipt_id: message_receipt_id.clone(),
-                                            },
+                                            error
                                         )
-                                        .await
-                                        .map(|_| ())
-                                        .map_err(|error| {
-                                            anyhow::anyhow!(
-                                                "external queue provider '{}': {}",
-                                                EXTERNAL_QUEUE_ENQUEUE_FUNCTION_ID,
-                                                error
-                                            )
-                                        }),
-                                };
+                                    });
 
                                 if let Some(invocation_id) = invocation_id {
                                     match result {
@@ -2127,32 +2113,6 @@ mod tests {
             .expect("register standalone queue provider");
     }
 
-    #[derive(Clone, Default)]
-    struct RecordingQueueEnqueuer {
-        calls: Arc<tokio::sync::Mutex<Vec<(String, String, Value, String)>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl super::QueueEnqueuer for RecordingQueueEnqueuer {
-        async fn enqueue_to_function_queue(
-            &self,
-            queue_name: &str,
-            function_id: &str,
-            data: Value,
-            message_id: String,
-            _traceparent: Option<String>,
-            _baggage: Option<String>,
-        ) -> anyhow::Result<()> {
-            self.calls.lock().await.push((
-                queue_name.to_string(),
-                function_id.to_string(),
-                data,
-                message_id,
-            ));
-            Ok(())
-        }
-    }
-
     #[test]
     fn runtime_worker_registry_upserts_lists_and_removes() {
         let engine = Engine::new();
@@ -3092,58 +3052,6 @@ mod tests {
             }
             other => panic!("expected enqueue InvocationResult, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn enqueue_prefers_loaded_builtin_queue_module() {
-        ensure_default_meter();
-        let engine = Engine::new();
-        let builtin = Arc::new(RecordingQueueEnqueuer::default());
-        engine.set_queue_module(builtin.clone()).await;
-        let (source_tx, mut source_rx) = mpsc::channel::<Outbound>(8);
-        let source = WorkerConnection::new(source_tx);
-        let invocation_id = Uuid::new_v4();
-        let payload = json!({ "turn_id": "turn-1" });
-
-        engine
-            .router_msg(
-                &source,
-                &enqueue_invocation(
-                    invocation_id,
-                    "harness-turn",
-                    "harness::turn",
-                    payload.clone(),
-                ),
-            )
-            .await
-            .expect("enqueue invocation should route");
-
-        let source_message = tokio::time::timeout(Duration::from_secs(1), source_rx.recv())
-            .await
-            .expect("timed out waiting for enqueue acknowledgement")
-            .expect("source channel should produce acknowledgement");
-        let receipt = match source_message {
-            Outbound::Protocol(Message::InvocationResult {
-                invocation_id: returned_invocation_id,
-                result: Some(result),
-                error: None,
-                ..
-            }) => {
-                assert_eq!(returned_invocation_id, invocation_id);
-                result["messageReceiptId"]
-                    .as_str()
-                    .expect("enqueue acknowledgement should contain receipt")
-                    .to_string()
-            }
-            other => panic!("expected successful enqueue InvocationResult, got {other:?}"),
-        };
-
-        let calls = builtin.calls.lock().await;
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "harness-turn");
-        assert_eq!(calls[0].1, "harness::turn");
-        assert_eq!(calls[0].2, payload);
-        assert_eq!(calls[0].3, receipt);
     }
 
     // ---------------------------------------------------------------
