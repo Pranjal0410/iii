@@ -604,7 +604,7 @@ fn register_validate(iii: &IIIClient) {
     let _ = iii.register_function("worker::validate", describe_op(rf, "worker::validate"));
 }
 
-fn sink_ref<'a>(sink: &'a Arc<IIIEventSink>) -> &'a dyn EventSink {
+fn sink_ref(sink: &Arc<IIIEventSink>) -> &dyn EventSink {
     // `IIIEventSink` is the only mutating-op sink today, but the
     // orchestrators take `&dyn EventSink` — this helper makes the
     // coercion site explicit at every call site.
@@ -929,17 +929,29 @@ mod tests {
         .unwrap();
         let workers_dir = tmp.path().join(".iii/workers");
         std::fs::create_dir_all(&workers_dir).unwrap();
-        std::fs::write(workers_dir.join(name), b"").unwrap();
+        // is_worker_running cross-checks the pidfile PID against the process
+        // table (recycled PIDs must not read as alive — MOT-3931), so the
+        // pidfile must point at a real process running from the workers dir.
+        let worker_bin = workers_dir.join(name);
+        std::fs::copy("/bin/sleep", &worker_bin).unwrap();
+        let mut child = std::process::Command::new(&worker_bin)
+            .arg("30")
+            .spawn()
+            .expect("spawn sleeper as fake binary worker");
         let pids = tmp.path().join(".iii/pids");
         std::fs::create_dir_all(&pids).unwrap();
-        // Our own pid makes the kill(pid, 0) liveness check succeed.
-        std::fs::write(
-            pids.join(format!("{name}.pid")),
-            std::process::id().to_string(),
-        )
-        .unwrap();
+        std::fs::write(pids.join(format!("{name}.pid")), child.id().to_string()).unwrap();
 
-        let s = build_status(name).await.unwrap();
+        // `spawn()` returns pre-exec; on Linux the identity check reads the
+        // parent's argv until exec completes. Poll briefly.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut s = build_status(name).await.unwrap();
+        while !s.running && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            s = build_status(name).await.unwrap();
+        }
+        let _ = child.kill();
+        let _ = child.wait();
 
         assert!(s.installed);
         assert_eq!(s.worker_type, "binary");
