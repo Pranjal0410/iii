@@ -919,6 +919,79 @@ mod tests {
             registry.pending_triggers.contains_key("t_durable"),
             "durable intent survives another worker's disconnect"
         );
+
+        // The type arriving later must not resurrect the dropped intent —
+        // only the surviving durable one may activate.
+        let registrator = Arc::new(ControlledRegistrator::new(false, false));
+        registry
+            .register_trigger_type(TriggerType::new(
+                "missing-type",
+                "now present",
+                Box::new(Arc::clone(&registrator)),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(registrator.register_count.load(Ordering::SeqCst), 1);
+        assert!(registry.triggers.contains_key("t_durable"));
+        assert!(!registry.triggers.contains_key("t_owned"));
+        assert!(registry.pending_triggers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn owner_disconnect_while_parked_drops_the_disabled_binding() {
+        // Full lifecycle chain: a live binding is parked because its type's
+        // provider disconnected ([DISABLED]); then the binding's OWNER
+        // disconnects while it is parked. The intent must die with its owner
+        // and must NOT come back when the provider returns.
+        let registry = TriggerRegistry::new();
+        let provider = Uuid::new_v4();
+        let owner = Uuid::new_v4();
+
+        let gen_a = Arc::new(ControlledRegistrator::new(false, false));
+        registry
+            .register_trigger_type(TriggerType::new(
+                "evt",
+                "gen A",
+                Box::new(Arc::clone(&gen_a)),
+                Some(provider),
+            ))
+            .await
+            .unwrap();
+
+        let mut owned = make_trigger("t_owned", "evt");
+        owned.worker_id = Some(owner);
+        registry.register_trigger(owned).await.unwrap();
+
+        // Provider restarts: the owner's binding is parked, not dropped.
+        registry.unregister_worker(&provider).await;
+        assert!(registry.pending_triggers.contains_key("t_owned"));
+
+        // The owner disconnects while its binding is still parked.
+        registry.unregister_worker(&owner).await;
+        assert!(
+            registry.pending_triggers.is_empty(),
+            "parked intent dies with its owning worker"
+        );
+
+        // Provider returns: nothing may be re-delivered.
+        let gen_b = Arc::new(ControlledRegistrator::new(false, false));
+        registry
+            .register_trigger_type(TriggerType::new(
+                "evt",
+                "gen B",
+                Box::new(Arc::clone(&gen_b)),
+                Some(Uuid::new_v4()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            gen_b.register_count.load(Ordering::SeqCst),
+            0,
+            "dead owner's binding must not be resurrected"
+        );
+        assert!(registry.triggers.is_empty());
+        assert!(registry.pending_triggers.is_empty());
     }
 
     #[tokio::test]

@@ -3767,6 +3767,65 @@ mod tests {
         assert_eq!(id, "trig-early");
     }
 
+    #[tokio::test]
+    async fn test_cleanup_worker_drops_its_pending_trigger_intents() {
+        ensure_default_meter();
+        let engine = Engine::new();
+        let (tx, _rx) = mpsc::channel::<Outbound>(8);
+        let worker = WorkerConnection::new(tx);
+        engine.worker_registry.register_worker(worker.clone());
+
+        // The message path stamps the trigger with the origin connection as
+        // owner, so the parked intent is connection-owned.
+        let msg = Message::RegisterTrigger {
+            id: "trig-orphan".to_string(),
+            trigger_type: "never_registered".to_string(),
+            function_id: "fn-1".to_string(),
+            config: serde_json::json!({}),
+            metadata: None,
+        };
+        engine
+            .router_msg(&worker, &msg)
+            .await
+            .expect("RegisterTrigger should succeed at protocol level");
+        assert!(
+            engine
+                .trigger_registry
+                .pending_triggers
+                .contains_key("trig-orphan")
+        );
+
+        // The worker disconnects while its registration is still parked: the
+        // intent must be reaped with the connection, exactly like a live
+        // connection-owned binding would be.
+        engine.cleanup_worker(&worker).await;
+        assert!(
+            engine.trigger_registry.pending_triggers.is_empty(),
+            "pending intent should be reaped with its worker"
+        );
+
+        // A provider for the type arriving later must find nothing to
+        // deliver — the dead worker's intent must not be resurrected.
+        let (provider_tx, mut provider_rx) = mpsc::channel::<Outbound>(8);
+        let provider = WorkerConnection::new(provider_tx);
+        let tt_msg = Message::RegisterTriggerType {
+            id: "never_registered".to_string(),
+            description: "arrives after the owner died".to_string(),
+            trigger_request_format: None,
+            call_request_format: None,
+        };
+        engine
+            .router_msg(&provider, &tt_msg)
+            .await
+            .expect("RegisterTriggerType should succeed");
+
+        assert!(engine.trigger_registry.triggers.is_empty());
+        assert!(
+            provider_rx.try_recv().is_err(),
+            "provider must not receive a dead worker's trigger"
+        );
+    }
+
     // =========================================================================
     // router_msg: RegisterService
     // =========================================================================
