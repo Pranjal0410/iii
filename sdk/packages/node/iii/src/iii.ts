@@ -67,6 +67,14 @@ function getOsInfo(): string {
 }
 
 function getDefaultWorkerName(): string {
+  // III_WORKER_NAME carries the config.yaml entry name for managed workers
+  // (set by iii-worker at spawn). Engine truth (`iii worker status`/`list`)
+  // matches connections by name, so the managed identity must win over the
+  // hostname:pid fallback.
+  const managedName = process.env.III_WORKER_NAME
+  if (managedName) {
+    return managedName
+  }
   return `${os.hostname()}:${process.pid}`
 }
 
