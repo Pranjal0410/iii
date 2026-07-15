@@ -347,6 +347,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_url_validator_blocks_ipv4_mapped_ipv6_loopback() {
+        let validator = UrlValidator::new(UrlValidatorConfig {
+            allowlist: vec!["*".to_string()],
+            block_private_ips: true,
+            require_https: false,
+        })
+        .unwrap();
+
+        let result = validator.validate("http://[::ffff:127.0.0.1]/").await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SecurityError::PrivateIpBlocked
+        ));
+    }
+
+    #[tokio::test]
     async fn test_url_validator_blocks_private_rfc1918() {
         let validator = UrlValidator::new(UrlValidatorConfig {
             allowlist: vec!["*".to_string()],
